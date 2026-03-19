@@ -13,7 +13,7 @@ namespace Melia.Web.Controllers
 	public abstract class JsonApiController : BaseController
 	{
 		/// <summary>
-		/// Sends a JSON response with a 200 status code (OK).
+		/// Sends a JSON response with the given status code.
 		/// </summary>
 		/// <remarks>
 		/// The object is serialized as is and must contain all necessary fields,
@@ -22,40 +22,56 @@ namespace Melia.Web.Controllers
 		/// </remarks>
 		/// <example>
 		/// this.Ok(new { result = ApiResults.Success, some_response = "Lorem ipsum dolor sit amet." });
-		/// 
+		///
 		/// Response:
 		///   Status: 200 OK
 		///   { "result": 0, "some_response": "Lorem ipsum dolor sit amet." }
 		/// </example>
 		/// <param name="content"></param>
+		/// <param name="statusCode"></param>
 		/// <returns></returns>
-		public async Task Ok(object content)
+		public async Task Ok(object content, HttpStatusCode statusCode = HttpStatusCode.OK)
 		{
+			this.AddCorsHeaders();
+
 			var json = JsonSerializer.Serialize(content);
-			await this.SendText(MimeTypes.Json, HttpStatusCode.OK, json);
+			await this.SendText(MimeTypes.Json, statusCode, json);
 		}
 
 		/// <summary>
-		/// Sends a JSON error response with a 500 status code (Internal Server Error).
+		/// Sends a JSON error response with the given status code.
 		/// </summary>
 		/// <example>
 		/// this.Error("An error occurred.");
-		/// 
+		///
 		/// Response:
 		///   Status: 500 Internal Server Error
 		///   { "result": 1, "error": "An error occurred." }
 		/// </example>
 		/// <param name="message"></param>
+		/// <param name="statusCode"></param>
 		/// <returns></returns>
-		public async Task Error(string message)
+		public async Task Error(string message, HttpStatusCode statusCode = HttpStatusCode.InternalServerError)
 		{
+			this.AddCorsHeaders();
+
 			var response = new
 			{
 				result = ApiResults.Error,
 				error = message,
 			};
 
-			await this.SendText(MimeTypes.Json, HttpStatusCode.InternalServerError, JsonSerializer.Serialize(response));
+			await this.SendText(MimeTypes.Json, statusCode, JsonSerializer.Serialize(response));
+		}
+
+		/// <summary>
+		/// Adds CORS headers to the response.
+		/// </summary>
+		private void AddCorsHeaders()
+		{
+			this.Response.Headers.Set("Access-Control-Allow-Origin", "*");
+			this.Response.Headers.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+			this.Response.Headers.Set("Access-Control-Allow-Headers", "Content-Type");
 		}
 
 		/// <summary>

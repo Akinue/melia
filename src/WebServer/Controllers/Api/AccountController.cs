@@ -1,4 +1,5 @@
 using System;
+using System.Net;
 using System.Net.Mail;
 using System.Security.Cryptography;
 using System.Text;
@@ -33,7 +34,7 @@ namespace Melia.Web.Controllers.Api
 		{
 			if (!WebServer.Instance.Conf.Web.EnableApiAccountCreation)
 			{
-				await this.Error("Account creation via API is disabled.");
+				await this.Error("Account creation via API is disabled.", HttpStatusCode.BadRequest);
 				return;
 			}
 
@@ -43,37 +44,37 @@ namespace Melia.Web.Controllers.Api
 
 				if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password1) || string.IsNullOrWhiteSpace(request.Password2))
 				{
-					await this.Error("The username and password must not be empty.");
+					await this.Error("The username and password must not be empty.", HttpStatusCode.BadRequest);
 					return;
 				}
 
 				if (request.Password1 != request.Password2)
 				{
-					await this.Error("The passwords do not match.");
+					await this.Error("The passwords do not match.", HttpStatusCode.BadRequest);
 					return;
 				}
 
 				if (request.Username.Length < 4)
 				{
-					await this.Error("The username must be at least 4 characters long.");
+					await this.Error("The username must be at least 4 characters long.", HttpStatusCode.BadRequest);
 					return;
 				}
 
 				if (request.Password1.Length < 6)
 				{
-					await this.Error("The password must be at least 6 characters long.");
+					await this.Error("The password must be at least 6 characters long.", HttpStatusCode.BadRequest);
 					return;
 				}
 
 				if (WebServer.Instance.Database.AccountExists(request.Username))
 				{
-					await this.Error("The account name already exists.");
+					await this.Error("The account name already exists.", HttpStatusCode.BadRequest);
 					return;
 				}
 
 				if (AccountCreationLimiter.IsRateLimited(this.Request.RemoteEndPoint.Address.ToString()))
 				{
-					await this.Error("Too many account creation requests. Please try again later.");
+					await this.Error("Too many account creation requests. Please try again later.", (HttpStatusCode)429);
 					return;
 				}
 
@@ -114,7 +115,7 @@ namespace Melia.Web.Controllers.Api
 			}
 			catch
 			{
-				await this.Error("Invalid request format.");
+				await this.Error("Invalid request format.", HttpStatusCode.BadRequest);
 				return;
 			}
 
@@ -122,13 +123,13 @@ namespace Melia.Web.Controllers.Api
 
 			if (PasswordResetLimiter.IsRateLimited(remoteIp))
 			{
-				await this.Error("Too many requests. Try again later.");
+				await this.Error("Too many requests. Try again later.", (HttpStatusCode)429);
 				return;
 			}
 
 			if (string.IsNullOrWhiteSpace(request.Email))
 			{
-				await this.Error("Email address is required.");
+				await this.Error("Email address is required.", HttpStatusCode.BadRequest);
 				return;
 			}
 
@@ -138,7 +139,7 @@ namespace Melia.Web.Controllers.Api
 			}
 			catch (FormatException)
 			{
-				await this.Error("Invalid email format.");
+				await this.Error("Invalid email format.", HttpStatusCode.BadRequest);
 				return;
 			}
 
@@ -196,13 +197,13 @@ namespace Melia.Web.Controllers.Api
 			}
 			catch
 			{
-				await this.Error("Invalid request format.");
+				await this.Error("Invalid request format.", HttpStatusCode.BadRequest);
 				return;
 			}
 
 			if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Token))
 			{
-				await this.Error("Email and token are required.");
+				await this.Error("Email and token are required.", HttpStatusCode.BadRequest);
 				return;
 			}
 
@@ -210,14 +211,14 @@ namespace Melia.Web.Controllers.Api
 
 			if (storedHash == null || expiration < DateTime.UtcNow)
 			{
-				await this.Error("Invalid or expired token.");
+				await this.Error("Invalid or expired token.", HttpStatusCode.BadRequest);
 				return;
 			}
 
 			var submittedHash = HashToken(request.Token);
 			if (!string.Equals(submittedHash, storedHash, StringComparison.Ordinal))
 			{
-				await this.Error("Invalid token.");
+				await this.Error("Invalid token.", HttpStatusCode.BadRequest);
 				return;
 			}
 
@@ -246,19 +247,19 @@ namespace Melia.Web.Controllers.Api
 			}
 			catch
 			{
-				await this.Error("Invalid request format.");
+				await this.Error("Invalid request format.", HttpStatusCode.BadRequest);
 				return;
 			}
 
 			if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Token) || string.IsNullOrWhiteSpace(request.NewPassword))
 			{
-				await this.Error("Email, token, and new password are required.");
+				await this.Error("Email, token, and new password are required.", HttpStatusCode.BadRequest);
 				return;
 			}
 
 			if (request.NewPassword.Length < 6)
 			{
-				await this.Error("Password must be at least 6 characters long.");
+				await this.Error("Password must be at least 6 characters long.", HttpStatusCode.BadRequest);
 				return;
 			}
 
@@ -267,14 +268,14 @@ namespace Melia.Web.Controllers.Api
 			if (storedHash == null)
 			{
 				Log.Warning($"Password reset attempt with no active token for: {request.Email}");
-				await this.Error("Invalid or expired token.");
+				await this.Error("Invalid or expired token.", HttpStatusCode.BadRequest);
 				return;
 			}
 
 			if (expiration < DateTime.UtcNow)
 			{
 				Log.Warning($"Password reset attempt with expired token for: {request.Email}");
-				await this.Error("Token has expired. Please request a new password reset.");
+				await this.Error("Token has expired. Please request a new password reset.", HttpStatusCode.BadRequest);
 				return;
 			}
 
@@ -282,7 +283,7 @@ namespace Melia.Web.Controllers.Api
 			if (!string.Equals(submittedHash, storedHash, StringComparison.Ordinal))
 			{
 				Log.Warning($"Password reset attempt with invalid token for: {request.Email}");
-				await this.Error("Invalid token.");
+				await this.Error("Invalid token.", HttpStatusCode.BadRequest);
 				return;
 			}
 
