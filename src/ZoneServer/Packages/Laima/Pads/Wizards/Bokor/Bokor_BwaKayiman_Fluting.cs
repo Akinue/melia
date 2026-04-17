@@ -1,19 +1,19 @@
 using System;
 using Melia.Shared.Packages;
 using Melia.Shared.Game.Const;
-using Melia.Shared.World;
 using Melia.Zone.Network;
 using Melia.Zone.World.Actors;
 using Melia.Zone.World.Actors.Characters;
 using Melia.Zone.World.Actors.Monsters;
-using Melia.Zone.World.Actors.Pads;
 using static Melia.Zone.Pads.Helpers.PadHelper;
+using Melia.Zone.Skills.Combat;
+using static Melia.Zone.Skills.SkillUseFunctions;
 
 namespace Melia.Zone.Pads.Handlers
 {
 	/// <summary>
-	/// Pad handler for Bwa Kayiman follower pads that circle around the caster.
-	/// Each pad follows a summon, dealing trampling damage to enemies.
+	/// Pad handler for Bwa Kayiman follower pads that form a conga line
+	/// behind the caster, dealing trampling damage to enemies.
 	/// </summary>
 	[Package("laima")]
 	[PadHandler(PadName.Bokor_BwaKayiman_Fluting)]
@@ -24,7 +24,7 @@ namespace Melia.Zone.Pads.Handlers
 			var pad = args.Trigger;
 			var creator = args.Creator;
 
-			Send.ZC_NORMAL.PadUpdate(creator, pad, true);
+			Send.ZC_NORMAL.PadUpdate(pad, true);
 			pad.SetUpdateInterval(200);
 		}
 		public void Entered(object sender, PadTriggerActorArgs args)
@@ -37,7 +37,8 @@ namespace Melia.Zone.Pads.Handlers
 			if (!creator.IsEnemy(initiator))
 				return;
 
-			initiator.StartBuff(BuffId.Pollution_Debuff, skill.Level, 0, TimeSpan.FromSeconds(3), creator);
+			var skillHitResult = SCR_SkillHit(creator, initiator, skill);
+			initiator.StartBuff(BuffId.Pollution_Debuff, skill.Level, skillHitResult.Damage, TimeSpan.FromSeconds(3), creator);
 		}
 
 		public void Destroyed(object sender, PadTriggerArgs args)
@@ -45,7 +46,7 @@ namespace Melia.Zone.Pads.Handlers
 			var pad = args.Trigger;
 			var creator = args.Creator;
 
-			Send.ZC_NORMAL.PadUpdate(creator, pad, false);
+			Send.ZC_NORMAL.PadUpdate(pad, false);
 		}
 
 		public void Updated(object sender, PadTriggerArgs args)
@@ -66,19 +67,46 @@ namespace Melia.Zone.Pads.Handlers
 				return;
 			}
 
-			var summonHandle = pad.Variables.Get<int>("BwaKayiman_SummonHandle");
-			var monster = character.Map.GetMonster(summonHandle);
+			if (pad.FollowTarget == null)
+			{
+				var summonHandle = pad.Variables.Get<int>("Melia.Skills.BwaKayiman.SummonHandle");
+				var monster = character.Map.GetMonster(summonHandle);
 
-			if (monster is not Summon summon || summon.IsDead)
+				if (monster is not Summon summon || summon.IsDead)
+				{
+					pad.Destroy();
+					return;
+				}
+
+				pad.FollowsTarget(summon);
+			}
+			else if (pad.FollowTarget.IsDead)
 			{
 				pad.Destroy();
 				return;
 			}
 
-			pad.Movement.MoveTo(summon.Position);
-			pad.Position = summon.Position;
+			var samdiveveMultiplier = 1f;
+			if (creator.TryGetSkill(SkillId.Bokor_Samdiveve, out var samdiveveSkill))
+				samdiveveMultiplier += samdiveveSkill.Level * 0.10f;
 
-			PadDamageEnemy(pad, 1f, 0, 0, "None", 1, 0f, 0f);
+			var targets = pad.Map.GetAttackableEnemiesIn(creator, pad.Area);
+			foreach (var actor in targets)
+			{
+				if (actor is not ICombatEntity target || target.IsDead)
+					continue;
+
+				if (!creator.IsEnemy(target))
+					continue;
+
+				var skillHitResult = SCR_SkillHit(creator, target, skill);
+				var damage = skillHitResult.Damage * samdiveveMultiplier;
+
+				target.TakeDamage(damage, creator);
+
+				var hitInfo = new HitInfo(creator, target, skill, damage, skillHitResult.Result);
+				Send.ZC_HIT_INFO(creator, target, hitInfo);
+			}
 		}
 	}
 }

@@ -27,10 +27,23 @@ public class KillEventsScript : GeneralScript
 
 	private void OnRootCrystalKilled(Mob mob, ICombatEntity attacker)
 	{
-		attacker.StartBuff(BuffId.RootCrystalMoveSpeed, 10, 0, TimeSpan.FromSeconds(10), attacker);
+		attacker.StartBuff(BuffId.RootCrystalMoveSpeed, 10, 0, TimeSpan.FromSeconds(15), attacker);
 
 		if (attacker is Character character)
+		{
 			CallSafe(this.MonsterHealStamina(mob, character, 100000));
+
+			var party = character.Connection?.Party;
+			if (party != null)
+			{
+				var members = character.Map.GetPartyMembersInRange(character, 150);
+				foreach (var member in members)
+				{
+					member.StartBuff(BuffId.RootCrystalMoveSpeed, 10, 0, TimeSpan.FromSeconds(15), attacker);
+					CallSafe(this.MonsterHealStamina(mob, member, 100000));
+				}
+			}
+		}
 	}
 
 	private async Task MonsterHealStamina(Mob mob, Character character, int staminaAmount)

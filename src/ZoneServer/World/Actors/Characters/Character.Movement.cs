@@ -10,7 +10,9 @@ using Melia.Shared.Data.Database;
 using Melia.Shared.Game.Const;
 using Melia.Shared.Versioning;
 using Melia.Shared.World;
+using Melia.Zone.Items.Effects;
 using Melia.Zone.Network;
+using Melia.Zone.World.Actors;
 using Melia.Zone.World.Actors.CombatEntities.Components;
 using Melia.Zone.World.Actors.Components;
 using Melia.Zone.World.Actors.Monsters;
@@ -237,6 +239,13 @@ namespace Melia.Zone.World.Actors.Characters
 				{
 					this.Position = pos;
 					Send.ZC_SET_POS(this);
+
+					if (this.IsRiding && this.ActiveCompanion is Companion ridingCompanion)
+					{
+						ridingCompanion.Position = pos;
+						Send.ZC_SET_POS(ridingCompanion);
+					}
+
 					lock (_warpLock)
 					{
 						this.IsWarping = false;
@@ -336,7 +345,13 @@ namespace Melia.Zone.World.Actors.Characters
 			var channelId = Math2.Clamp(0, availableZones.Length, _destinationChannelId);
 			var serverInfo = availableZones[channelId];
 
-			this.Components.Get<BuffComponent>()?.StopTempBuffs();
+			var wasRiding = this.IsRiding;
+			var excludeFromTempBuffs = wasRiding
+				? new HashSet<BuffId> { BuffId.RidingCompanion }
+				: null;
+			this.Components.Get<BuffComponent>()?.StopTempBuffs(excludeFromTempBuffs);
+			if (wasRiding)
+				this.Variables.Perm.SetBool("Melia.WasRidingOnWarp", true);
 
 			Log.Info($"Character '{this.Name}' (ID: {this.DbId}) finalizing warp to Map {destinationMapId}. Saving...");
 
@@ -347,10 +362,8 @@ namespace Melia.Zone.World.Actors.Characters
 				if (currentConnection != null && currentConnection.Account != null &&
 					ZoneServer.Instance.Database.CheckSessionKey(currentConnection.Account.Id, currentConnection.SessionKey))
 				{
-					ZoneServer.Instance.Database.SaveCharacterData(this);
-					ZoneServer.Instance.Database.SaveAccountData(currentConnection.Account);
+					ZoneServer.Instance.Database.SavePlayerData(this, currentConnection.Account);
 					this.SavedForWarp = true;
-					Log.Debug($"Character '{this.Name}' (ID: {this.DbId}) save successful for warp.");
 					saveSuccess = true;
 				}
 				else
@@ -369,8 +382,29 @@ namespace Melia.Zone.World.Actors.Characters
 			{
 				if (saveSuccess)
 				{
+					// Remove from map immediately so other players don't see
+					// a lingering ghost. The connection is still open, so the
+					// ZC_MOVE_ZONE_OK packet will still reach the client.
+					var campfires = this.Map?.GetMonsters(m => m.Id == 46011 && m.OwnerHandle == this.Handle);
+					if (campfires != null)
+					{
+						foreach (var campfire in campfires)
+							this.Map.RemoveMonster(campfire);
+					}
+
+					this.CloseEyes();
+					foreach (var companion in this.Companions.GetList())
+						companion.Map?.RemoveMonster(companion);
+					this.Map?.RemoveCharacter(this);
+
+					ItemHookRegistry.Instance.UnregisterCharacter(this);
+					this.Properties.RemoveEvents();
+					ZoneServer.Instance.World.BattleManager.ForceEndBattle(this);
+
 					Log.Info($"Instructing client for '{this.Name}' (ID: {this.DbId}) to move to Zone Server {serverInfo.Ip}:{serverInfo.Port}, Map {destinationMapId}, Channel {channelId}.");
 					Send.ZC_MOVE_ZONE_OK(this, channelId, serverInfo.Ip, serverInfo.Port, destinationMapId);
+
+					this.Connection.LoggedIn = false;
 				}
 				else
 				{
@@ -413,60 +447,98 @@ namespace Melia.Zone.World.Actors.Characters
 			if (!this.EyesOpen)
 				return;
 
-			var currentlyVisibleMonsters = this.Map.GetVisibleMonsters(this);
-			var currentlyVisibleCharacters = this.Map.GetVisibleCharacters(this);
-			var currentlyVisiblePads = this.Map.GetVisiblePads(this);
-
-			IEnumerable<Character> appearCharacters;
-			IEnumerable<Character> disappearCharacters;
-			IMonster[] appearMonsterList;
-			IEnumerable<IMonster> disappearMonsters;
-			IEnumerable<Pad> appearPads;
-			IEnumerable<Pad> disappearPads;
 			int sentCount;
 
 			lock (_lookAroundLock)
 			{
-				appearCharacters = currentlyVisibleCharacters.Except(_visibleCharacters).ToArray();
-				disappearCharacters = _visibleCharacters.Except(currentlyVisibleCharacters).ToArray();
+				// Fill reusable scratch sets with currently visible entities
+				_currentVisMonsters.Clear();
+				this.Map.GetVisibleMonsters(this, _currentVisMonsters);
 
-				appearMonsterList = currentlyVisibleMonsters.Except(_visibleMonsters).ToArray();
-				disappearMonsters = _visibleMonsters.Except(currentlyVisibleMonsters).ToArray();
+				_currentVisChars.Clear();
+				this.Map.GetVisibleCharacters(this, _currentVisChars);
 
-				appearPads = currentlyVisiblePads.Except(_visiblePads).ToArray();
-				disappearPads = _visiblePads.Except(currentlyVisiblePads).ToArray();
+				_currentVisPads.Clear();
+				this.Map.GetVisiblePads(this, _currentVisPads);
+				// Compute appeared characters
+				_tempAppearChars.Clear();
+				foreach (var c in _currentVisChars)
+					if (!_visibleCharacters.Contains(c))
+						_tempAppearChars.Add(c);
+
+				// Compute disappeared characters
+				_tempDisappearChars.Clear();
+				foreach (var c in _visibleCharacters)
+					if (!_currentVisChars.Contains(c))
+						_tempDisappearChars.Add(c);
+
+				// Compute appeared monsters
+				_tempAppearMonsters.Clear();
+				foreach (var m in _currentVisMonsters)
+					if (!_visibleMonsters.Contains(m))
+						_tempAppearMonsters.Add(m);
+
+				// Compute disappeared monsters
+				_tempDisappearMonsters.Clear();
+				foreach (var m in _visibleMonsters)
+					if (!_currentVisMonsters.Contains(m))
+						_tempDisappearMonsters.Add(m);
+
+				// Compute appeared pads
+				_tempAppearPads.Clear();
+				foreach (var p in _currentVisPads)
+					if (!_visiblePads.Contains(p))
+						_tempAppearPads.Add(p);
+
+				// Compute disappeared pads
+				_tempDisappearPads.Clear();
+				foreach (var p in _visiblePads)
+					if (!_currentVisPads.Contains(p))
+						_tempDisappearPads.Add(p);
 
 				// Update _visibleMonsters to reflect only what the client
 				// actually knows about: previously visible (minus disappeared)
 				// plus only the monsters we actually sent this tick.
-				sentCount = Math.Min(appearMonsterList.Length, MaxMonsterAppearPerTick);
-				var newVisibleMonsters = new HashSet<IMonster>(_visibleMonsters);
-				foreach (var monster in disappearMonsters)
-					newVisibleMonsters.Remove(monster);
+				sentCount = Math.Min(_tempAppearMonsters.Count, MaxMonsterAppearPerTick);
+				foreach (var m in _tempDisappearMonsters)
+					_visibleMonsters.Remove(m);
 				for (var i = 0; i < sentCount; i++)
-					newVisibleMonsters.Add(appearMonsterList[i]);
-				_visibleMonsters = newVisibleMonsters.ToArray();
+					_visibleMonsters.Add(_tempAppearMonsters[i]);
 
-				_visibleCharacters = currentlyVisibleCharacters;
-				_visiblePads = currentlyVisiblePads;
+				// Characters and pads update fully each tick
+				_visibleCharacters.Clear();
+				foreach (var c in _currentVisChars)
+					_visibleCharacters.Add(c);
+
+				_visiblePads.Clear();
+				foreach (var p in _currentVisPads)
+					_visiblePads.Add(p);
 			}
 
-			this.HandleAppearingCharacters(appearCharacters);
-			this.HandleDisappearingCharacters(disappearCharacters);
+			this.HandleAppearingCharacters(_tempAppearChars);
+			this.HandleDisappearingCharacters(_tempDisappearChars);
 
-			for (var i = 0; i < sentCount; i++)
-				this.HandleAppearingSingleMonster(appearMonsterList[i]);
+			for (var i = 0; i < sentCount && i < _tempAppearMonsters.Count; i++)
+				this.HandleAppearingSingleMonster(_tempAppearMonsters[i]);
 
-			this.HandleDisappearingMonsters(disappearMonsters);
+			this.HandleDisappearingMonsters(_tempDisappearMonsters);
 
-			this.HandleAppearingPads(appearPads);
-			this.HandleDisappearingPads(disappearPads);
+			this.HandleAppearingPads(_tempAppearPads);
+			this.HandleDisappearingPads(_tempDisappearPads);
+
+			for (var i = 0; i < _tempAppearChars.Count; i++)
+			{
+				var character = _tempAppearChars[i];
+				if (character.IsRiding && character.ActiveCompanion is Companion ridingCompanion)
+					Send.ZC_NORMAL.RidePet(this.Connection, character, ridingCompanion);
+			}
 		}
 
-		private void HandleAppearingCharacters(IEnumerable<Character> appearCharacters)
+		private void HandleAppearingCharacters(List<Character> appearCharacters)
 		{
-			foreach (var character in appearCharacters)
+			for (var i = 0; i < appearCharacters.Count; i++)
 			{
+				var character = appearCharacters[i];
 				Send.ZC_ENTER_PC(this.Connection, character);
 				Send.ZC_NORMAL.HeadgearVisibilityUpdate(this.Connection, character);
 
@@ -507,16 +579,16 @@ namespace Melia.Zone.World.Actors.Characters
 			}
 		}
 
-		private void HandleDisappearingCharacters(IEnumerable<Character> disappearCharacters)
+		private void HandleDisappearingCharacters(List<Character> disappearCharacters)
 		{
-			foreach (var character in disappearCharacters)
-				Send.ZC_LEAVE(this.Connection, character);
+			for (var i = 0; i < disappearCharacters.Count; i++)
+				Send.ZC_LEAVE(this.Connection, disappearCharacters[i]);
 		}
 
-		private void HandleAppearingMonsters(IEnumerable<IMonster> appearMonsters)
+		private void HandleAppearingMonsters(List<IMonster> appearMonsters)
 		{
-			foreach (var monster in appearMonsters)
-				this.HandleAppearingSingleMonster(monster);
+			for (var i = 0; i < appearMonsters.Count; i++)
+				this.HandleAppearingSingleMonster(appearMonsters[i]);
 		}
 
 		/// <summary>
@@ -567,7 +639,7 @@ namespace Melia.Zone.World.Actors.Characters
 
 			monster.ShowEffects(this.Connection);
 
-			if (monster.OwnerHandle != 0)
+			if (monster.OwnerHandle != 0 && this.Map.TryGetCharacter(monster.OwnerHandle, out _))
 				Send.ZC_OWNER(this, monster);
 
 			if (monster is Summon summon)
@@ -581,6 +653,13 @@ namespace Melia.Zone.World.Actors.Characters
 					Send.ZC_FLY_HEIGHT(this.Connection, companion, 80);
 				}
 				Send.ZC_NORMAL.Pet_AssociateHandleWorldId(this.Connection, companion);
+
+				if (companion.PendingMount && companion.Owner == this)
+				{
+					companion.PendingMount = false;
+					this.StartBuff(BuffId.RidingCompanion, TimeSpan.Zero, companion);
+					Send.ZC_NORMAL.RidePet(this.Connection, this, companion);
+				}
 			}
 
 			if (monster is ICombatEntity entity)
@@ -606,32 +685,32 @@ namespace Melia.Zone.World.Actors.Characters
 				Send.ZC_SET_NPC_STATE(minMon);
 		}
 
-		private void HandleDisappearingMonsters(IEnumerable<IMonster> disappearMonsters)
+		private void HandleDisappearingMonsters(List<IMonster> disappearMonsters)
 		{
-			foreach (var monster in disappearMonsters)
+			for (var i = 0; i < disappearMonsters.Count; i++)
 			{
+				var monster = disappearMonsters[i];
 				Send.ZC_LEAVE(this.Connection, monster);
 				if (monster is ICombatEntity entity)
 					Send.ZC_BUFF_CLEAR(this.Connection, entity);
 			}
 		}
 
-		private void HandleAppearingPads(IEnumerable<Pad> appearPads)
+		private void HandleAppearingPads(List<Pad> appearPads)
 		{
-			foreach (var pad in appearPads)
+			for (var i = 0; i < appearPads.Count; i++)
 			{
+				var pad = appearPads[i];
 				if (pad.Creator is ICombatEntity creator)
 				{
-					// Send pad create packet to this character
-					Send.ZC_NORMAL.PadUpdateToCharacter(this, creator, pad, true);
-					// Track this character as an observer
+					Send.ZC_NORMAL.PadUpdate(this, pad, true);
 					pad.Observers.AddObserver(this);
 					_observedPads.Add(pad);
 				}
 			}
 		}
 
-		private void HandleDisappearingPads(IEnumerable<Pad> disappearPads)
+		private void HandleDisappearingPads(List<Pad> disappearPads)
 		{
 			// Don't remove from observers or send destroy - the player stays tracked
 			// so they receive the destroy packet when the pad actually expires.
@@ -653,17 +732,50 @@ namespace Melia.Zone.World.Actors.Characters
 			// the player expects to see everything on map entry.
 			lock (_lookAroundLock)
 			{
-				var currentlyVisibleMonsters = this.Map.GetVisibleMonsters(this);
-				var currentlyVisibleCharacters = this.Map.GetVisibleCharacters(this);
-				var currentlyVisiblePads = this.Map.GetVisiblePads(this);
+				// Get currently visible entities
+				_currentVisChars.Clear();
+				this.Map.GetVisibleCharacters(this, _currentVisChars);
 
-				this.HandleAppearingCharacters(currentlyVisibleCharacters.Except(_visibleCharacters));
-				this.HandleAppearingMonsters(currentlyVisibleMonsters.Except(_visibleMonsters));
-				this.HandleAppearingPads(currentlyVisiblePads.Except(_visiblePads));
+				_currentVisMonsters.Clear();
+				this.Map.GetVisibleMonsters(this, _currentVisMonsters);
 
-				_visibleMonsters = currentlyVisibleMonsters;
-				_visibleCharacters = currentlyVisibleCharacters;
-				_visiblePads = currentlyVisiblePads;
+				_currentVisPads.Clear();
+				this.Map.GetVisiblePads(this, _currentVisPads);
+
+				// Compute newly appearing characters
+				_tempAppearChars.Clear();
+				foreach (var c in _currentVisChars)
+					if (!_visibleCharacters.Contains(c))
+						_tempAppearChars.Add(c);
+
+				// Compute newly appearing monsters
+				_tempAppearMonsters.Clear();
+				foreach (var m in _currentVisMonsters)
+					if (!_visibleMonsters.Contains(m))
+						_tempAppearMonsters.Add(m);
+
+				// Compute newly appearing pads
+				_tempAppearPads.Clear();
+				foreach (var p in _currentVisPads)
+					if (!_visiblePads.Contains(p))
+						_tempAppearPads.Add(p);
+
+				this.HandleAppearingCharacters(_tempAppearChars);
+				this.HandleAppearingMonsters(_tempAppearMonsters);
+				this.HandleAppearingPads(_tempAppearPads);
+
+				// Update visible sets
+				_visibleCharacters.Clear();
+				foreach (var c in _currentVisChars)
+					_visibleCharacters.Add(c);
+
+				_visibleMonsters.Clear();
+				foreach (var m in _currentVisMonsters)
+					_visibleMonsters.Add(m);
+
+				_visiblePads.Clear();
+				foreach (var p in _currentVisPads)
+					_visiblePads.Add(p);
 			}
 		}
 
@@ -676,20 +788,23 @@ namespace Melia.Zone.World.Actors.Characters
 
 			lock (_lookAroundLock)
 			{
-				foreach (var monster in _visibleMonsters)
+				var monsters = _visibleMonsters.ToArray();
+				var characters = _visibleCharacters.ToArray();
+				var pads = _observedPads.ToArray();
+
+				_visibleMonsters.Clear();
+				_visibleCharacters.Clear();
+				_visiblePads.Clear();
+				_observedPads.Clear();
+
+				foreach (var monster in monsters)
 					Send.ZC_LEAVE(this.Connection, monster);
 
-				foreach (var character in _visibleCharacters)
+				foreach (var character in characters)
 					Send.ZC_LEAVE(this.Connection, character);
 
-				// Clean up all observed pads (includes those we walked out of range from)
-				foreach (var pad in _observedPads)
+				foreach (var pad in pads)
 					pad.Observers.RemoveObserver(this);
-
-				_visibleMonsters = [];
-				_visibleCharacters = [];
-				_visiblePads = [];
-				_observedPads.Clear();
 			}
 		}
 		#endregion

@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.Dialogues;
 using Melia.Zone.World.Actors.Characters;
@@ -23,6 +23,7 @@ public class FlowerCrownQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -59,9 +60,6 @@ public class FlowerCrownQuestScript : QuestScript
 				if (player.Inventory.HasItem(CaroLeafId, 50) &&
 					player.Inventory.HasItem(UpentBarkId, 25))
 				{
-					player.Inventory.RemoveItem(CaroLeafId, 50);
-					player.Inventory.RemoveItem(UpentBarkId, 25);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("*weaves the materials with practiced hands* Such lovely colors! Here, try it on. The crown suits you perfectly! The forest has blessed us with its beauty once again."));
 
@@ -95,5 +93,11 @@ public class FlowerCrownQuestScript : QuestScript
 		{
 			await dialog.Msg(L("*nods understandingly* Of course, of course. The flowers will still be here when you return. They always are."));
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(CaroLeafId, 50);
+		character.Inventory.RemoveItem(UpentBarkId, 25);
 	}
 }

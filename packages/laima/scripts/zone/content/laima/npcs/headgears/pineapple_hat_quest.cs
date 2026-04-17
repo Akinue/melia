@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.Dialogues;
 using Melia.Zone.World.Actors.Characters;
@@ -23,6 +23,7 @@ public class PineappleHatQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -59,9 +60,6 @@ public class PineappleHatQuestScript : QuestScript
 				if (player.Inventory.HasItem(CockatriceFeatherId, 75) &&
 					player.Inventory.HasItem(HogmaWarriorBoneId, 2))
 				{
-					player.Inventory.RemoveItem(CockatriceFeatherId, 75);
-					player.Inventory.RemoveItem(HogmaWarriorBoneId, 2);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("*works with manic energy* YES! The feathers create the perfect spiky texture! And the bones... *crafts furiously* ...give it the proper structure! BEHOLD, FASHION INNOVATION!"));
 
@@ -95,5 +93,11 @@ public class PineappleHatQuestScript : QuestScript
 		{
 			await dialog.Msg(L("*sighs dramatically* Alas, another visionary masterpiece must wait... But fashion never sleeps! Neither do I! *returns to furious sketching*"));
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(CockatriceFeatherId, 75);
+		character.Inventory.RemoveItem(HogmaWarriorBoneId, 2);
 	}
 }

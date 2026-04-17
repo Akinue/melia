@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.Dialogues;
 using Melia.Zone.World.Actors.Characters;
@@ -23,6 +23,7 @@ public class PuddingHatQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -61,9 +62,6 @@ public class PuddingHatQuestScript : QuestScript
 				if (player.Inventory.HasItem(TruffleMushroom, 100) &&
 					player.Inventory.HasItem(CorpseFlower, 50))
 				{
-					player.Inventory.RemoveItem(TruffleMushroom, 100);
-					player.Inventory.RemoveItem(CorpseFlower, 50);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("*claps excitedly* Perfect! The mushrooms give it that bouncy texture, and the flower stems add just the right aroma! Here's your Pudding Hat - doesn't it look delicious enough to eat?"));
 
@@ -97,5 +95,11 @@ public class PuddingHatQuestScript : QuestScript
 		{
 			await dialog.Msg(L("*returns to stirring* That's okay! The pot's always simmering if you change your mind~"));
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(TruffleMushroom, 100);
+		character.Inventory.RemoveItem(CorpseFlower, 50);
 	}
 }

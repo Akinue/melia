@@ -4,6 +4,10 @@ using Melia.Shared.Packages;
 using Melia.Shared.Data.Database;
 using Melia.Shared.Game.Const;
 using Melia.Zone.Buffs.Base;
+using Melia.Zone.Scripting;
+using Melia.Zone.Scripting.ScriptableEvents;
+using Melia.Zone.Skills;
+using Melia.Zone.Skills.Combat;
 using Melia.Zone.World.Actors;
 using Melia.Zone.World.Actors.Monsters;
 
@@ -62,10 +66,32 @@ namespace Melia.Zone.Buffs.Handlers.Wizards.Bokor
 			}
 		}
 
+		[CombatCalcModifier(CombatCalcPhase.AfterBonuses, BuffId.Samdiveve_Buff)]
+		public void OnAttackAfterBonuses(ICombatEntity attacker, ICombatEntity target, Skill skill, SkillModifier modifier, SkillHitResult skillHitResult)
+		{
+			if (!attacker.TryGetBuff(BuffId.Samdiveve_Buff, out var buff))
+				return;
+
+			if (attacker is not Summon summon)
+				return;
+
+			var damageBonus = buff.NumArg1 * 0.10f;
+			skillHitResult.Damage *= 1f + damageBonus;
+		}
+
 		private float GetMspdBonus(Buff buff)
 		{
 			var skillLevel = buff.NumArg1;
-			return BaseBonus + skillLevel * BonusPerLevel;
+			var bonus = BaseBonus + skillLevel * BonusPerLevel;
+
+			var byAbility = 1f;
+			if (buff.Caster is ICombatEntity caster && caster.TryGetSkill(buff.SkillId, out var skill))
+			{
+				var SCR_Get_AbilityReinforceRate = ScriptableFunctions.Skill.Get("SCR_Get_AbilityReinforceRate");
+				byAbility += SCR_Get_AbilityReinforceRate(skill);
+			}
+
+			return bonus * byAbility;
 		}
 	}
 }

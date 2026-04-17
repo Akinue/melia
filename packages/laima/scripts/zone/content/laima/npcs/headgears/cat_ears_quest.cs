@@ -1,10 +1,11 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.Dialogues;
 using Melia.Zone.World.Quests;
 using Melia.Zone.World.Quests.Objectives;
 using Melia.Zone.World.Quests.Rewards;
 using static Melia.Zone.Scripting.Shortcuts;
+using Melia.Zone.World.Actors.Characters;
 
 public class ChupacabraFearQuestScript : QuestScript
 {
@@ -24,6 +25,7 @@ public class ChupacabraFearQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -64,9 +66,6 @@ public class ChupacabraFearQuestScript : QuestScript
 				if (player.Inventory.HasItem(ChupacabraMeatId, 80) &&
 					player.Inventory.HasItem(ChupacabraSkinId, 5))
 				{
-					player.Inventory.RemoveItem(ChupacabraMeatId, 80);
-					player.Inventory.RemoveItem(ChupacabraSkinId, 5);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("*examines the materials* They... they really are just like desert foxes? I've been afraid for nothing! Here, take these cat ears - they remind me that not everything is as scary as it seems."));
 				}
@@ -95,5 +94,11 @@ public class ChupacabraFearQuestScript : QuestScript
 			default:
 				break;
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(ChupacabraMeatId, 80);
+		character.Inventory.RemoveItem(ChupacabraSkinId, 5);
 	}
 }

@@ -23,6 +23,7 @@ using Melia.Zone.World.Actors.CombatEntities.Components;
 using Melia.Zone.World.Actors.Components;
 using Melia.Zone.World.Items;
 using Melia.Zone.World.Maps;
+using Melia.Zone.World.Spawning;
 using Yggdrasil.Logging;
 using Yggdrasil.Scheduling;
 using Yggdrasil.Util;
@@ -103,6 +104,11 @@ namespace Melia.Zone.World.Actors.Monsters
 			= ZoneServer.Instance.World.CreateGenType();
 
 		/// <summary>
+		/// Gets or sets the spawner that created this mob, if any.
+		/// </summary>
+		public ISpawner Spawner { get; set; }
+
+		/// <summary>
 		/// Gets or sets what kind of "monster" the mob is.
 		/// </summary>
 		public RelationType MonsterType { get; set; } = RelationType.Enemy;
@@ -155,9 +161,14 @@ namespace Melia.Zone.World.Actors.Monsters
 		/// </summary>
 		public int Level
 		{
-			get { return (int)this.Properties.GetFloat(PropertyName.Lv); }
-			set { this.Properties.SetFloat(PropertyName.Lv, value); }
+			get => _cachedLevel;
+			set
+			{
+				this.Properties.SetFloat(PropertyName.Lv, value);
+				_cachedLevel = value;
+			}
 		}
+		private int _cachedLevel;
 
 		/// <summary>
 		/// Gets or sets the mob's AoE Defense Ratio.
@@ -283,22 +294,47 @@ namespace Melia.Zone.World.Actors.Monsters
 		/// Returns the monster's effective size type, read from its
 		/// properties or falling back to the data definition.
 		/// </summary>
-		public SizeType EffectiveSize => Enum.Parse<SizeType>(this.Properties.GetString(PropertyName.Size, this.Data.Size));
+		public SizeType EffectiveSize => _cachedEffectiveSize;
+		private SizeType _cachedEffectiveSize;
+
+		/// <summary>
+		/// Returns the cached agent radius for this monster.
+		/// </summary>
+		public float AgentRadius => _cachedAgentRadius;
+		private float _cachedAgentRadius;
+
+		/// <summary>
+		/// Recomputes the cached EffectiveSize and AgentRadius from the
+		/// current Size property. Call after changing the Size property.
+		/// </summary>
+		public void InvalidateSizeCache()
+		{
+			_cachedEffectiveSize = ParseSizeType(this.Properties.GetString(PropertyName.Size, this.Data.Size));
+			_cachedAgentRadius = _cachedEffectiveSize switch
+			{
+				SizeType.S => 12,
+				SizeType.PC => 5,
+				SizeType.M => 15,
+				SizeType.L => 20,
+				SizeType.XL => 40,
+				SizeType.XXL => 40,
+				_ => 0,
+			};
+		}
 
 		/// <summary>
 		/// Gets or sets the monster's rank (e.g. Normal, Elite, Boss).
 		/// </summary>
 		public MonsterRank Rank
 		{
-			get
-			{
-				return Enum.Parse<MonsterRank>(this.Properties.GetString(PropertyName.MonRank, this.Data.Rank));
-			}
+			get => _cachedRank;
 			set
 			{
 				this.Properties.SetString(PropertyName.MonRank, value);
+				_cachedRank = value;
 			}
 		}
+		private MonsterRank _cachedRank;
 
 		/// <summary>
 		/// Gets or sets the monster's current shield value.
@@ -362,6 +398,11 @@ namespace Melia.Zone.World.Actors.Monsters
 			// based on the newly copied base values and the updated level.
 			clone.Properties.InvalidateAll();
 
+			// Refresh cached size/rank/level since properties were copied.
+			clone.InvalidateSizeCache();
+			clone._cachedRank = ParseMonsterRank(clone.Properties.GetString(PropertyName.MonRank, clone.Data.Rank));
+			clone._cachedLevel = (int)clone.Properties.GetFloat(PropertyName.Lv);
+
 			// The clone should start with full HP and SP, as CopyFrom would have copied
 			// the original's current (possibly zero) HP.
 			clone.Properties.SetFloat(PropertyName.HP, clone.Properties.GetFloat(PropertyName.MHP));
@@ -371,12 +412,19 @@ namespace Melia.Zone.World.Actors.Monsters
 		}
 
 		/// <summary>
-		/// Creates new NPC.
+		/// Creates new mob.
 		/// </summary>
-		public Mob(int id, RelationType type) : base()
+		public Mob(int id, RelationType type) : this(id)
+		{
+			this.MonsterType = type;
+		}
+
+		/// <summary>
+		/// Creates new mob.
+		/// </summary>
+		public Mob(int id) : base()
 		{
 			this.Id = id;
-			this.MonsterType = type;
 
 			this.Components.Add(this.Buffs = new BuffComponent(this));
 			this.Components.Add(this.CombatState = new CombatComponent(this));
@@ -387,6 +435,10 @@ namespace Melia.Zone.World.Actors.Monsters
 			this.Components.Add(new BaseSkillComponent(this));
 
 			this.LoadData();
+
+			this.InvalidateSizeCache();
+			_cachedRank = ParseMonsterRank(this.Properties.GetString(PropertyName.MonRank, this.Data.Rank));
+			_cachedLevel = (int)this.Properties.GetFloat(PropertyName.Lv);
 
 			this.Name = this.Data.Name;
 			this.MoveType = this.Data.MoveType;
@@ -464,15 +516,8 @@ namespace Melia.Zone.World.Actors.Monsters
 				Send.MonsterSkillBalloonCancel(this);
 			}
 
-			// Apply damage to shield, then handle stagger and HP damage.
+			// Apply damage to shield, then apply HP damage.
 			damage = this.ApplyToShield(damage);
-
-			// Increase damage if the mob is staggered.
-			if (this.IsStaggered())
-			{
-				// Apply a damage multiplier while staggered (e.g., 1.5x).
-				damage *= 1.5f;
-			}
 
 			var currentHp = this.Hp;
 
@@ -510,21 +555,14 @@ namespace Melia.Zone.World.Actors.Monsters
 				{
 					var remainingShieldHealth = this.Shield;
 					this.Shield = 0;
-
-					if (!this.CanStagger())
-						damage -= remainingShieldHealth / 5;
-					else
-						this.ApplyStagger();
-
+					damage -= remainingShieldHealth / 5;
 					Send.ZC_UPDATE_SHIELD(this, this.Shield, 1);
 				}
 				else
 				{
 					this.Shield -= (int)shieldDamage;
 					Send.ZC_UPDATE_SHIELD(this, this.Shield, 0);
-
-					if (!this.CanStagger())
-						return 0;
+					return 0;
 				}
 			}
 
@@ -545,13 +583,13 @@ namespace Melia.Zone.World.Actors.Monsters
 
 			this.Properties.SetFloat(PropertyName.HP, 0);
 			this.Components.Get<MovementComponent>()?.Stop();
-			this.DisappearTime = DateTime.Now.AddSeconds(2);
+			this.DisappearTime = DateTime.Now.AddSeconds(3);
 			if (this.Effects?.Count != 0)
 				Send.ZC_NORMAL.ClearEffects(this);
 
 			var beneficiary = this.GetKillBeneficiary(killer);
 
-			if (this.MonsterType == RelationType.Enemy && beneficiary != null)
+			if (beneficiary != null && beneficiary.IsOnline && beneficiary.Connection != null)
 			{
 				this.GetExpToGive(out var exp, out var jobExp);
 
@@ -594,6 +632,26 @@ namespace Melia.Zone.World.Actors.Monsters
 		}
 
 		/// <summary>
+		/// Clears heavy internal state after the monster is removed from
+		/// the map, allowing the GC to collect referenced objects sooner.
+		/// </summary>
+		public void Cleanup()
+		{
+			this.Died = null;
+			this.FixedDrops.Clear();
+			//this.Vars.Clear();
+			while (this.StaticDrops.TryTake(out _)) { }
+
+			this.Components.Get<CombatComponent>()?.ClearTracking();
+
+			if (this.Components.TryGet<AiComponent>(out var ai))
+				ai.Script?.ReleaseEntity();
+
+			if (this.Properties is MonsterProperties monsterProperties)
+				monsterProperties.RemoveEvents();
+		}
+
+		/// <summary>
 		/// Returns the character that benefits from the kill of the mob
 		/// in form of EXP and drops.
 		/// </summary>
@@ -611,6 +669,8 @@ namespace Melia.Zone.World.Actors.Monsters
 
 			if (beneficiary.Components.Get<AiComponent>()?.Script.GetMaster() is Character master)
 				beneficiary = master;
+			else if (beneficiary is Summon summon && summon.Owner is Character summonOwner)
+				beneficiary = summonOwner;
 
 			return beneficiary as Character;
 		}
@@ -644,6 +704,11 @@ namespace Melia.Zone.World.Actors.Monsters
 			{
 				expRate *= worldConf.EliteExpRate / 100.0;
 				jobExpRate *= worldConf.EliteExpRate / 100.0;
+			}
+			if (this.IsMythicMonster())
+			{
+				expRate *= worldConf.MythicExpRate / 100.0;
+				jobExpRate *= worldConf.MythicExpRate / 100.0;
 			}
 			if (this.Rank == MonsterRank.Boss)
 			{
@@ -758,16 +823,21 @@ namespace Melia.Zone.World.Actors.Monsters
 
 			// Map bonus drops
 			var mapBonusRerolls = 1;
-			if (this.TryGetSuperMob(out var superMobType))
+			var superMobTypes = this.GetSuperMobTypes();
+			if (superMobTypes.Count > 0)
 			{
 				var worldConf = ZoneServer.Instance.Conf.World;
-				mapBonusRerolls = superMobType switch
+				foreach (var type in superMobTypes)
 				{
-					SuperMobType.Silver => worldConf.SilverJackpotRolls,
-					SuperMobType.Gold => worldConf.GoldJackpotRolls,
-					SuperMobType.Elite => worldConf.EliteRolls,
-					_ => 1
-				};
+					mapBonusRerolls += type switch
+					{
+						SuperMobType.Silver => worldConf.SilverJackpotRolls,
+						SuperMobType.Gold => worldConf.GoldJackpotRolls,
+						SuperMobType.Elite => worldConf.EliteRolls,
+						SuperMobType.Mythic => worldConf.MythicRolls,
+						_ => 0
+					};
+				}
 			}
 			this.DropMapBonusItems(killer, mapBonusRerolls);
 		}
@@ -812,7 +882,8 @@ namespace Melia.Zone.World.Actors.Monsters
 				adjustedDropChance *= lootingRate;
 
 				// Calculate Enhanced drops for super mobs
-				var isSuperMob = this.TryGetSuperMob(out var superMobType);
+				var superMobTypes = this.GetSuperMobTypes();
+				var isSuperMob = superMobTypes.Count > 0;
 				var superMobRerolls = 0;
 				var superMobGuaranteedItemDrop = false;
 				var superMobMoneyMultiplier = 0f;
@@ -820,29 +891,36 @@ namespace Melia.Zone.World.Actors.Monsters
 				if (isSuperMob)
 				{
 					var worldConf = ZoneServer.Instance.Conf.World;
-					switch (superMobType)
+					foreach (var superMobType in superMobTypes)
 					{
-						case SuperMobType.Silver:
-							superMobRerolls = worldConf.SilverJackpotRolls;
-							superMobGuaranteedItemDrop = originalDropChance > worldConf.SilverJackpotGuaranteedItemThreshold;
-							superMobMoneyMultiplier = worldConf.SilverJackpotRolls / 20f;
-							superMobMoneyStacks = rnd.Next(40, 50);
-							break;
+						switch (superMobType)
+						{
+							case SuperMobType.Silver:
+								superMobRerolls += worldConf.SilverJackpotRolls;
+								superMobGuaranteedItemDrop |= originalDropChance > worldConf.SilverJackpotGuaranteedItemThreshold;
+								superMobMoneyMultiplier += worldConf.SilverJackpotRolls / 20f;
+								break;
 
-						case SuperMobType.Gold:
-							superMobRerolls = worldConf.GoldJackpotRolls;
-							superMobGuaranteedItemDrop = originalDropChance > worldConf.GoldJackpotGuaranteedItemThreshold;
-							superMobMoneyMultiplier = worldConf.GoldJackpotRolls / 20f;
-							superMobMoneyStacks = rnd.Next(40, 50);
-							break;
+							case SuperMobType.Gold:
+								superMobRerolls += worldConf.GoldJackpotRolls;
+								superMobGuaranteedItemDrop |= originalDropChance > worldConf.GoldJackpotGuaranteedItemThreshold;
+								superMobMoneyMultiplier += worldConf.GoldJackpotRolls / 20f;
+								break;
 
-						case SuperMobType.Elite:
-							superMobRerolls = worldConf.EliteRolls;
-							superMobGuaranteedItemDrop = originalDropChance > worldConf.EliteGuaranteedItemThreshold;
-							superMobMoneyMultiplier = worldConf.EliteRolls / 20f;
-							superMobMoneyStacks = rnd.Next(40, 50);
-							break;
+							case SuperMobType.Elite:
+								superMobRerolls += worldConf.EliteRolls;
+								superMobGuaranteedItemDrop |= originalDropChance > worldConf.EliteGuaranteedItemThreshold;
+								superMobMoneyMultiplier += worldConf.EliteRolls / 20f;
+								break;
+
+							case SuperMobType.Mythic:
+								superMobRerolls += worldConf.MythicRolls;
+								superMobGuaranteedItemDrop |= originalDropChance > worldConf.MythicGuaranteedItemThreshold;
+								superMobMoneyMultiplier += worldConf.MythicRolls / 20f;
+								break;
+						}
 					}
+					superMobMoneyStacks = rnd.Next(40, 50);
 				}
 
 				if (this.Rank == MonsterRank.Boss)
@@ -918,30 +996,49 @@ namespace Melia.Zone.World.Actors.Monsters
 		/// <returns></returns>
 		private bool TryGetSuperMob(out SuperMobType superMobType)
 		{
-			superMobType = (SuperMobType)(-1);
-
-			// Note: The client cannot handle SuperDrop and EliteMonsterBuff
-			// together.
-			if (this.Buffs.Has(BuffId.EliteMonsterBuff))
+			var types = this.GetSuperMobTypes();
+			if (types.Count > 0)
 			{
-				superMobType = SuperMobType.Elite;
+				superMobType = types[0];
 				return true;
 			}
+
+			superMobType = (SuperMobType)(-1);
+			return false;
+		}
+
+		private List<SuperMobType> GetSuperMobTypes()
+		{
+			var types = new List<SuperMobType>();
+
+			if (this.IsMythicMonster())
+				types.Add(SuperMobType.Mythic);
+
+			if (this.Buffs.Has(BuffId.EliteMonsterBuff))
+				types.Add(SuperMobType.Elite);
+
 			if (this.Buffs.TryGet(BuffId.SuperDrop, out var buff))
 			{
 				if (buff.NumArg2 == 0)
-				{
-					superMobType = SuperMobType.Silver;
-					return true;
-				}
+					types.Add(SuperMobType.Silver);
 				else if (buff.NumArg2 == 1)
-				{
-					superMobType = SuperMobType.Gold;
-					return true;
-				}
+					types.Add(SuperMobType.Gold);
 			}
 
-			return false;
+			return types;
+		}
+
+		/// <summary>
+		/// Returns true if this monster has any mythic buff active.
+		/// </summary>
+		public bool IsMythicMonster()
+		{
+			return this.IsBuffActive(BuffId.Mythic_Chain_Lightning_Buff)
+				|| this.IsBuffActive(BuffId.Mythic_Boosting_Morale_Buff)
+				|| this.IsBuffActive(BuffId.Mythic_Puddle_Buff)
+				|| this.IsBuffActive(BuffId.Mythic_Bomb_Buff)
+				|| this.IsBuffActive(BuffId.Mythic_InfectiousDisease_Buff)
+				|| this.IsBuffActive(BuffId.Mythic_Link_Buff);
 		}
 
 		/// <summary>
@@ -977,7 +1074,7 @@ namespace Melia.Zone.World.Actors.Monsters
 
 			var dropItem = new Item(itemId, amount);
 
-			if (dropItem.Data.Type == ItemType.Equip)
+			if (dropItem.Data.Type == ItemType.Equip && dropItem.Data.Group != ItemGroup.Premium && dropItem.Data.Group != ItemGroup.Helmet && dropItem.Data.Group != ItemGroup.Armband)
 			{
 				var lootingChance = killer?.Properties.GetFloat(PropertyName.LootingChance, 1) ?? 1;
 				if (lootingChance <= 0)
@@ -1240,6 +1337,30 @@ namespace Melia.Zone.World.Actors.Monsters
 					this.Tendency = TendencyType.Aggressive;
 
 				// TODO: Add summoning and special attacks.
+				return;
+			}
+
+			if (this.Level < worldConf.MythicMinLevel)
+				return;
+
+			var mythicChance = worldConf.MythicSpawnChance * eliteRate / 100f;
+			if (rnd.NextDouble() * 100 < mythicChance)
+			{
+				var mythicBuffs = new[]
+				{
+					BuffId.Mythic_Chain_Lightning_Buff,
+					BuffId.Mythic_Boosting_Morale_Buff,
+					BuffId.Mythic_Puddle_Buff,
+					BuffId.Mythic_Bomb_Buff,
+					BuffId.Mythic_InfectiousDisease_Buff,
+					BuffId.Mythic_Link_Buff,
+				};
+
+				var chosenBuff = mythicBuffs[rnd.Next(mythicBuffs.Length)];
+				this.StartBuff(chosenBuff, 1, 0, TimeSpan.Zero, this);
+
+				if (worldConf.MythicAlwaysAggressive)
+					this.Tendency = TendencyType.Aggressive;
 			}
 		}
 
@@ -1331,19 +1452,7 @@ namespace Melia.Zone.World.Actors.Monsters
 			if (entity.IsDead)
 				return false;
 
-			if (this.IsLocked(LockType.Attack))
-				return false;
-
-			if (!this.CanSee(entity))
-				return false;
-
-			if (entity.Properties.GetString(PropertyName.HitProof, "NO") == "YES")
-				return false;
-
 			if (entity is Companion companion && companion.IsRiding)
-				return false;
-
-			if (!this.IsEnemy(entity))
 				return false;
 
 			if (entity is Character character
@@ -1351,19 +1460,22 @@ namespace Melia.Zone.World.Actors.Monsters
 				&& !character.Connection.LoadComplete)
 				return false;
 
-			// For now, let's specify that mobs can attack any combat
-			// entities, since we want them them to be able to attack
-			// both characters and other mobs.
-			//return (entity is ICombatEntity);
+			if (this.IsLocked(LockType.Attack))
+				return false;
 
-			// New plan. Let's say that mobs can attack those entities
-			// they're hostile towards. That allows AoEs to ignore
-			// friendly entities. If the mob doesn't have an AI,
-			// it shouldn't need to be able to attack anything,
-			// so we return false in that case.
+			if (entity.Properties.GetString(PropertyName.HitProof, "NO") == "YES")
+				return false;
+
+			if (!this.CanSee(entity))
+				return false;
+
+			// Mobs with an AI can attack those entities they're hostile
+			// towards. This allows AoEs to ignore friendly entities.
+			// IsHostileTowards includes IsEnemy, so we don't need a
+			// separate IsEnemy check. Mobs without an AI fall back to
+			// the basic IsEnemy check.
 			if (!this.Components.TryGet<AiComponent>(out var ai))
 				return this.IsEnemy(entity);
-
 
 			return ai.Script.IsHostileTowards(entity);
 		}
@@ -1603,12 +1715,25 @@ namespace Melia.Zone.World.Actors.Monsters
 		}
 
 		/// <summary>
-		/// Can stagger
+		/// Returns true if this mob can be staggered by the damage-threshold
+		/// interrupt system. Bosses, Elite, and Mythic monsters are immune.
 		/// </summary>
 		/// <returns></returns>
 		public bool CanStagger()
 		{
-			return this.Rank == MonsterRank.Boss;
+			if (this is Companion || this is Summon)
+				return false;
+
+			if (this.Rank == MonsterRank.Boss || this.Rank == MonsterRank.Elite)
+				return false;
+
+			if (this.IsBuffActive(BuffId.EliteMonsterBuff))
+				return false;
+
+			if (this.IsMythicMonster())
+				return false;
+
+			return true;
 		}
 
 		/// <summary>
@@ -1676,6 +1801,59 @@ namespace Melia.Zone.World.Actors.Monsters
 				return true;
 			}
 			return false;
+		}
+
+		/// <summary>
+		/// Fast SizeType parser that avoids reflection-based Enum.Parse.
+		/// </summary>
+		private static SizeType ParseSizeType(string value)
+		{
+			return value switch
+			{
+				"None" => SizeType.None,
+				"Hide" => SizeType.Hide,
+				"Hidden" => SizeType.Hidden,
+				"VS" => SizeType.VS,
+				"SS" => SizeType.SS,
+				"S" => SizeType.S,
+				"M" => SizeType.M,
+				"L" => SizeType.L,
+				"XL" => SizeType.XL,
+				"XXL" => SizeType.XXL,
+				"XXXL" => SizeType.XXXL,
+				"OBS" => SizeType.OBS,
+				"Item" => SizeType.Item,
+				"ItemS" => SizeType.ItemS,
+				"ItemM" => SizeType.ItemM,
+				"Icewall" => SizeType.Icewall,
+				"XL_Hit" => SizeType.XL_Hit,
+				"XL_LHit" => SizeType.XL_LHit,
+				"PC" => SizeType.PC,
+				"EX" => SizeType.EX,
+				_ => SizeType.None,
+			};
+		}
+
+		/// <summary>
+		/// Fast MonsterRank parser that avoids reflection-based Enum.Parse.
+		/// </summary>
+		private static MonsterRank ParseMonsterRank(string value)
+		{
+			return value switch
+			{
+				"Normal" => MonsterRank.Normal,
+				"Elite" => MonsterRank.Elite,
+				"Boss" => MonsterRank.Boss,
+				"Special" => MonsterRank.Special,
+				"Material" => MonsterRank.Material,
+				"NPC" => MonsterRank.NPC,
+				"MISC" => MonsterRank.MISC,
+				"Neutral" => MonsterRank.Neutral,
+				"Pet" => MonsterRank.Pet,
+				"Monster" => MonsterRank.Monster,
+				"Instance" => MonsterRank.Instance,
+				_ => MonsterRank.Normal,
+			};
 		}
 	}
 }

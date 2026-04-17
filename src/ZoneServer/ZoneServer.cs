@@ -27,6 +27,7 @@ using Melia.Zone.Services;
 using Melia.Zone.Skills.Handlers;
 using Melia.Zone.Skills.Handlers.Base;
 using Melia.Zone.Spawning;
+using Melia.Zone.World.Spawning;
 using Melia.Zone.Util;
 using Melia.Zone.World;
 using Melia.Zone.World.Actors.Characters;
@@ -45,8 +46,12 @@ namespace Melia.Zone
 		public readonly static ZoneServer Instance = new();
 
 		private TcpConnectionAcceptor<ZoneConnection> _acceptor;
+		public bool BlockNewConnections { get; set; }
+		internal AutoSaveService AutoSave => _autoSaveService;
 		private AutoSaveService _autoSaveService;
 		private OrphanCleanupService _orphanCleanupService;
+		private LogCleanupService _logCleanupService;
+		private DeadConnectionSweepService _deadConnectionSweepService;
 
 		public override ServerType Type => ServerType.Zone;
 
@@ -167,11 +172,13 @@ namespace Melia.Zone
 			this.LoadTriggerFunctions();
 			this.LoadScripts("zone");
 			this.LoadIesMods();
+			this.PrepareWorld();
 			this.StartWorld();
 
-			SaveQueue.Start();
 			this.StartAutoSaveService();
 			this.StartOrphanCleanupService();
+			this.StartLogCleanupService();
+			this.StartDeadConnectionSweepService();
 			if (this.Conf.World.EnableProceduralQuests)
 			{
 				NpcSpawnManager.LoadSpawnData();
@@ -192,7 +199,12 @@ namespace Melia.Zone
 		private void StartAcceptor()
 		{
 			_acceptor = new TcpConnectionAcceptor<ZoneConnection>(this.ServerInfo.Port);
-			_acceptor.ConnectionChecker = (conn) => this.CheckConnection(conn, this.Database);
+			_acceptor.ConnectionChecker = (conn) =>
+			{
+				if (this.BlockNewConnections)
+					return new ConnectionCheck(ConnectionCheckResult.Reject, "Server is shutting down");
+				return this.CheckConnection(conn, this.Database);
+			};
 			_acceptor.ConnectionAccepted += this.OnConnectionAccepted;
 			_acceptor.ConnectionRejected += this.OnConnectionRejected;
 			_acceptor.Listen();
@@ -227,7 +239,7 @@ namespace Melia.Zone
 
 			try
 			{
-				this.Communicator.Connect("Coordinator", authentication, barracksServerInfo.InterIp, barracksServerInfo.InterPort);
+				this.Communicator.Connect("Coordinator", authentication, barracksServerInfo.InterHost, barracksServerInfo.InterPort);
 
 				this.Communicator.Subscribe("Coordinator", "ServerUpdates");
 				this.Communicator.Subscribe("Coordinator", "AllServers");
@@ -348,7 +360,7 @@ namespace Melia.Zone
 				}
 				case InitAutoMatchContentMessage initAutoMatchContentMessage:
 				{
-					this.HandleInitAutoMatchContent(initAutoMatchContentMessage);
+					this.World.AutoMatch.HandleInitAutoMatchContent(initAutoMatchContentMessage);
 					break;
 				}
 				case AutoMatchMembersUpdateMessage autoMatchMembersUpdateMessage:
@@ -357,63 +369,6 @@ namespace Melia.Zone
 					break;
 				}
 			}
-		}
-
-		/// <summary>
-		/// Handles the auto match content initialization message from SocialServer.
-		/// Creates a party for matched players and warps them to the dungeon.
-		/// </summary>
-		private void HandleInitAutoMatchContent(InitAutoMatchContentMessage message)
-		{
-			// Find all characters on this zone server that are part of the match
-			var matchedCharacters = new List<Character>();
-			foreach (var characterDbId in message.CharacterDbIds)
-			{
-				var character = this.World.GetCharacter(c => c.DbId == characterDbId);
-				if (character != null)
-					matchedCharacters.Add(character);
-			}
-
-			if (matchedCharacters.Count == 0)
-			{
-				Log.Debug("InitAutoMatchContentMessage: No matched characters found on this zone server.");
-				return;
-			}
-
-			// Remove all matched characters from their existing parties
-			foreach (var character in matchedCharacters)
-			{
-				if (character.HasParty)
-				{
-					var existingParty = character.Connection.Party;
-					existingParty.RemoveMember(character);
-				}
-			}
-
-			// Use the first matched character as the leader
-			var leader = matchedCharacters[0];
-
-			// Create a dungeon session with the AutoMatchZoneManager
-			var session = this.World.AutoMatch.CreateDungeonSession(leader, message.AutoMatchId, message.DungeonId);
-
-			// Add remaining characters to the session/party
-			for (var i = 1; i < matchedCharacters.Count; i++)
-			{
-				session.AddMember(matchedCharacters[i]);
-			}
-
-			// Store player count and clear any stale instance references on all characters
-			foreach (var character in matchedCharacters)
-			{
-				character.Variables.Temp.SetInt(AutoMatchZoneManager.PlayersCountVarName, message.CharacterDbIds.Count);
-				character.Variables.Perm.SetString(DungeonScript.ActiveInstanceVarName, null);
-			}
-
-			Log.Info("InitAutoMatchContentMessage: Created party for {0} players for dungeon id '{1}' (AutoMatchId: {2}).",
-				matchedCharacters.Count, message.DungeonId, message.AutoMatchId);
-
-			// Warp all players to the dungeon using the centralized dungeon warp method
-			DungeonScript.WarpPartyToDungeon(matchedCharacters, message.DungeonId);
 		}
 
 		/// <summary>
@@ -455,27 +410,36 @@ namespace Melia.Zone
 		/// </summary>
 		private void InitWorld()
 		{
-			using (Debug.Profile($"Initializing World", 5000))
-			{
-				Log.Info("Initializing world...");
-				this.World.Initialize();
-			}
-			using (Debug.Profile($"Initializing Game Events", 500))
-			{
-				Log.Info("Initializing game events...");
-				this.GameEvents.Initialize();
-			}
-			using (Debug.Profile($"Initializing Dungeon Reset Service", 100))
-			{
-				Log.Info("Initializing dungeon reset service...");
-				this.DungeonReset.Initialize();
-			}
-			using (Debug.Profile($"Initializing Achievement Service", 100))
-			{
-				Log.Info("Initializing achievement service...");
-				this.Achievements.Initialize();
-			}
+			Log.Info("Initializing world...");
+			this.World.Initialize();
+
+			Log.Info("Initializing game events...");
+			this.GameEvents.Initialize();
+
+			Log.Info("Initializing dungeon reset service...");
+			this.DungeonReset.Initialize();
+
+			Log.Info("Initializing achievement service...");
+			this.Achievements.Initialize();
 			Log.Info("  done loading {0} maps.", this.World.Count);
+		}
+
+		/// <summary>
+		/// Prepares world before it's started.
+		/// </summary>
+		private void PrepareWorld()
+		{
+			Log.Info("Prepairing world...");
+
+			// Removes spawners that have no spawn areas, as they would
+			// unnecessarily consume resources. This may happen naturally
+			// if the server loads spawners for maps it doesn't serve.
+			var spawners = this.World.GetSpawners();
+			foreach (var spawner in spawners)
+			{
+				if (spawner is MonsterSpawner ms && (!this.World.TryGetSpawnAreas(ms.SpawnPointsIdent, out var areas) || areas.Count == 0))
+					this.World.RemoveSpawner(spawner);
+			}
 		}
 
 		/// <summary>
@@ -648,21 +612,45 @@ namespace Melia.Zone
 		/// </summary>
 		public OrphanCleanupService OrphanCleanupService => _orphanCleanupService;
 
-		private void StopServices()
+		private void StartLogCleanupService()
+		{
+			try
+			{
+				var retentionDays = this.Conf.World.LogCleanupRetentionDays;
+				var intervalHours = this.Conf.World.LogCleanupIntervalHours;
+
+				_logCleanupService = new LogCleanupService(this.Database, retentionDays, TimeSpan.FromHours(intervalHours));
+			}
+			catch (Exception ex)
+			{
+				Log.Error("Failed to initialize LogCleanup Service: {0}", ex);
+			}
+		}
+
+		private void StartDeadConnectionSweepService()
+		{
+			try
+			{
+				_deadConnectionSweepService = new DeadConnectionSweepService(TimeSpan.FromSeconds(15));
+			}
+			catch (Exception ex)
+			{
+				Log.Error("Failed to initialize DeadConnectionSweep Service: {0}", ex);
+			}
+		}
+
+		public void StopServices()
 		{
 			Log.Info("Stopping server services...");
 
-			// Stop accepting new connections
-			this._acceptor?.Stop();
-			Log.Info("Acceptor stopped.");
+			// Block new connections (don't call _acceptor.Stop()
+			// as Yggdrasil's ResetSocket causes an exception loop).
+			this.BlockNewConnections = true;
+			Log.Info("New connections blocked.");
 
 			// Stop world update loop (gracefully if possible)
 			this.World?.Heartbeat.Stop();
 			Log.Info("World stopped.");
-
-			// Stop SaveQueue (drain remaining saves)
-			SaveQueue.Stop();
-			Log.Info("SaveQueue stopped.");
 
 			// Dispose AutoSave Service
 			_autoSaveService?.Dispose();
@@ -671,6 +659,14 @@ namespace Melia.Zone
 			// Dispose OrphanCleanup Service
 			_orphanCleanupService?.Dispose();
 			Log.Info("OrphanCleanup Service stopped.");
+
+			// Dispose LogCleanup Service
+			_logCleanupService?.Dispose();
+			Log.Info("LogCleanup Service stopped.");
+
+			// Dispose DeadConnectionSweep Service
+			_deadConnectionSweepService?.Dispose();
+			Log.Info("DeadConnectionSweep Service stopped.");
 
 			// Disconnect communicator
 			//Communicator?.Disconnect();

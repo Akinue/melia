@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.Dialogues;
 using Melia.Zone.World.Actors.Characters;
@@ -23,6 +23,7 @@ public class ShamanMaskQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -59,9 +60,6 @@ public class ShamanMaskQuestScript : QuestScript
 				if (player.Inventory.HasItem(WendigoFangId, 8) &&
 					player.Inventory.HasItem(WendigoToothId, 45))
 				{
-					player.Inventory.RemoveItem(WendigoFangId, 8);
-					player.Inventory.RemoveItem(WendigoToothId, 45);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("*chants in ancient tongue while crafting* The spirits are pleased with these offerings. Take this mask - may it help you see beyond the veil."));
 
@@ -95,5 +93,11 @@ public class ShamanMaskQuestScript : QuestScript
 		{
 			await dialog.Msg(L("*returns to meditation* The spirits will wait... as will I."));
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(WendigoFangId, 8);
+		character.Inventory.RemoveItem(WendigoToothId, 45);
 	}
 }

@@ -19,7 +19,8 @@ namespace Melia.Zone.Pads.Handlers
 		private const int PadLifeTimePerLevelMilliseconds = 1100;
 		private const int UpdateInterval = 500;
 		private const int FreezeDurationMilliSeconds = 4000;
-		private const int FreezeChance = 100;
+		private const int BaseFreezeChance = 60;
+		private const int FreezeChancePerLevel = 4;
 
 		/// <summary>
 		/// Handles the creation of the Frost Pillar pad.
@@ -29,7 +30,7 @@ namespace Melia.Zone.Pads.Handlers
 			var pad = args.Trigger;
 			var creator = args.Creator;
 
-			Send.ZC_NORMAL.PadUpdate(creator, pad, true);
+			Send.ZC_NORMAL.PadUpdate(pad, true);
 			pad.SetRange(PadRange);
 			pad.SetUpdateInterval(UpdateInterval);
 			var lifeTime = BasePadLifeTimeMilliseconds + (PadLifeTimePerLevelMilliseconds * pad.Skill.Level);
@@ -47,7 +48,7 @@ namespace Melia.Zone.Pads.Handlers
 			var pad = args.Trigger;
 			var creator = args.Creator;
 
-			Send.ZC_NORMAL.PadUpdate(creator, pad, false);
+			Send.ZC_NORMAL.PadUpdate(pad, false);
 		}
 
 		/// <summary>
@@ -94,6 +95,7 @@ namespace Melia.Zone.Pads.Handlers
 			var lifeTime = BasePadLifeTimeMilliseconds + (PadLifeTimePerLevelMilliseconds * pad.Skill.Level);
 			var monster = PadCreateMonster(pad, "attract_pillar", pad.Position, 0f, 0, lifeTime, "", "None", 1, true, "None", "None", false, "SET_PVE_NODAMAGE");
 			var mob = monster as Mob;
+			mob.SetHittable(false);
 			mob.MonsterType = RelationType.Friendly;
 			mob.Faction = FactionType.Law;
 			mob.StartBuff(BuffId.Invincible);
@@ -101,7 +103,7 @@ namespace Melia.Zone.Pads.Handlers
 
 		private void ApplyFrostPillarBuff(Pad pad, ICombatEntity creator, ICombatEntity target, float duration)
 		{
-			var freezeChance = FreezeChance;
+			var freezeChance = BaseFreezeChance + FreezeChancePerLevel * pad.Skill.Level;
 
 			if (creator.TryGetActiveAbility(AbilityId.Cryomancer9, out var abilCryomancer9))
 				freezeChance = (int)Math.Floor(freezeChance * (1 + abilCryomancer9.Level * 0.05));
@@ -117,7 +119,7 @@ namespace Melia.Zone.Pads.Handlers
 		private void RefreshFrostPillarBuff(Pad pad, ICombatEntity creator, Skill skill)
 		{
 			var buffTime = FreezeDurationMilliSeconds;
-			var freezeChance = FreezeChance;
+			var freezeChance = BaseFreezeChance + FreezeChancePerLevel * skill.Level;
 
 			if (creator.TryGetActiveAbility(AbilityId.Cryomancer9, out var abilCryomancer9))
 				freezeChance = (int)Math.Floor(freezeChance * (1 + abilCryomancer9.Level * 0.05));
@@ -127,7 +129,7 @@ namespace Melia.Zone.Pads.Handlers
 
 		private void ApplyFrostPillarDebuff(Pad pad)
 		{
-			PadBuffEnemyMonster(pad, RelationType.Enemy, 0, 0, BuffId.FrostPillar_Debuff, 1, 0, 1, 1, FreezeChance);
+			PadBuffEnemyMonster(pad, RelationType.Enemy, 0, 0, BuffId.FrostPillar_Debuff, 1, 0, 1, 1, BaseFreezeChance + FreezeChancePerLevel * pad.Skill.Level);
 		}
 	}
 }

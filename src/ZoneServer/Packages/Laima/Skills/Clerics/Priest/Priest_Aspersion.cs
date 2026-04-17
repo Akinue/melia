@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Melia.Shared.Packages;
 using Melia.Shared.L10N;
 using Melia.Shared.Game.Const;
@@ -15,7 +15,7 @@ namespace Melia.Zone.Skills.Handlers.Priest
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Priest_Aspersion)]
-	public class AspersionOverride : IMeleeGroundSkillHandler, IDynamicCasted
+	public class AspersionOverride : IGroundSkillHandler, IDynamicCasted
 	{
 		private const int BuffDurationSeconds = 300;
 		private const int BuffRange = 300;
@@ -28,7 +28,7 @@ namespace Melia.Zone.Skills.Handlers.Priest
 		/// <param name="originPos"></param>
 		/// <param name="farPos"></param>
 		/// <param name="targets"></param>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -47,7 +47,7 @@ namespace Melia.Zone.Skills.Handlers.Priest
 			Send.ZC_SKILL_MELEE_GROUND(caster, skill, farPos);
 
 			Send.ZC_SYNC_START(caster, skillHandle, 1);
-			caster.StartBuff(BuffId.Aspersion_Buff, skill.Level, 0f, TimeSpan.FromSeconds(BuffDurationSeconds), caster);
+			caster.StartBuff(BuffId.Aspersion_Buff, skill.Level, 0f, TimeSpan.FromSeconds(BuffDurationSeconds), caster, skill.Id);
 			Send.ZC_SYNC_END(caster, skillHandle, 0);
 			Send.ZC_SYNC_EXEC_BY_SKILL_TIME(caster, skillHandle);
 
@@ -61,7 +61,7 @@ namespace Melia.Zone.Skills.Handlers.Priest
 					{
 						if (member == caster)
 							continue;
-						member.StartBuff(BuffId.Aspersion_Buff, skill.Level, 0f, TimeSpan.FromSeconds(BuffDurationSeconds), caster);
+						member.StartBuff(BuffId.Aspersion_Buff, skill.Level, 0f, TimeSpan.FromSeconds(BuffDurationSeconds), caster, skill.Id);
 					}
 				}
 			}

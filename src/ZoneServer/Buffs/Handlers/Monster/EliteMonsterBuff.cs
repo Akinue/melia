@@ -7,7 +7,7 @@ using Melia.Zone.World.Actors;
 using Melia.Zone.World.Actors.Characters;
 using Melia.Zone.World.Actors.Monsters;
 
-namespace Melia.Zone.Buffs.Handlers
+namespace Melia.Zone.Buffs.Handlers.Monster
 {
 	/// <summary>
 	/// Handle for the Elite Buff, An enormous monster, like the leader of the group..
@@ -25,17 +25,19 @@ namespace Melia.Zone.Buffs.Handlers
 			if (size == SizeType.S)
 			{
 				monster.Properties.SetString(PropertyName.Size, SizeType.L);
+				monster.InvalidateSizeCache();
 				monster.ChangeScale(2f, 1f);
 			}
 
 			if (size == SizeType.M)
 			{
 				monster.Properties.SetString(PropertyName.Size, SizeType.L);
+				monster.InvalidateSizeCache();
 				monster.ChangeScale(1.5f, 1f);
 			}
 
 			if (monster.Rank == MonsterRank.Normal)
-				monster.Properties.SetString(PropertyName.MonRank, MonsterRank.Elite);
+				monster.Rank = MonsterRank.Elite;
 
 			var worldConf = ZoneServer.Instance.Conf.World;
 			var prevMaxHP = monster.Properties.GetFloat(PropertyName.MHP);
@@ -54,9 +56,15 @@ namespace Melia.Zone.Buffs.Handlers
 			var runSpeed = monster.Properties.GetFloat(PropertyName.RunMSPD);
 			var baseRunSpeed = 60;
 			var additionalRunSpeed = Math.Max(3, runSpeed - baseRunSpeed);
-			propertyOverrides.Add(PropertyName.RunMSPD, runSpeed + (additionalRunSpeed * worldConf.EliteStatRate / 100f));
+			propertyOverrides.Add(PropertyName.RunMSPD, runSpeed + (additionalRunSpeed * worldConf.EliteStatRate / 100f * 0.5f));
 
 			monster.ApplyOverrides(propertyOverrides);
+
+			// +1 SDR for elite monsters
+			monster.Properties.Modify(PropertyName.SDR_BM, 1);
+
+			// 20% faster skill usage
+			monster.Vars.Set("Melia.ShootTimeMultiplier", 0.8f);
 			monster.Heal(newMaxHP - prevMaxHP, 0);
 			monster.InvalidateProperties();
 		}

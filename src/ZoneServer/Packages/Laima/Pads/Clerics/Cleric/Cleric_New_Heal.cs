@@ -30,7 +30,7 @@ namespace Melia.Zone.Pads.Handlers.Clerics.Cleric
 			var pad = args.Trigger;
 			var creator = args.Creator;
 
-			Send.ZC_NORMAL.PadUpdate(creator, pad, true);
+			Send.ZC_NORMAL.PadUpdate(pad, true);
 			pad.Trigger.MaxUseCount = 1;
 			pad.Trigger.LifeTime = TimeSpan.FromSeconds(30);
 		}
@@ -45,7 +45,7 @@ namespace Melia.Zone.Pads.Handlers.Clerics.Cleric
 			var pad = args.Trigger;
 			var creator = args.Creator;
 
-			Send.ZC_NORMAL.PadUpdate(creator, pad, false);
+			Send.ZC_NORMAL.PadUpdate(pad, false);
 		}
 
 		/// <summary>
@@ -134,14 +134,15 @@ namespace Melia.Zone.Pads.Handlers.Clerics.Cleric
 			if (skillHitResult.Damage <= 0)
 				return;
 
-			// Heal Damage Bonus
+			// Heal Damage Bonus (exclude 5% MaxHP heal component)
 			var modifier = SkillModifier.Default;
 			var SCR_CalculateHeal = ScriptableFunctions.Combat.Get("SCR_CalculateHeal");
 			var damageBonus = SCR_CalculateHeal(caster, target, skill, modifier, skillHitResult);
+			damageBonus -= (float)Math.Floor(target.MaxHp * 0.05f);
 
 			modifier.AttackAttribute = AttributeType.Holy;
 			modifier.BonusDamage += damageBonus;
-			modifier.DamageMultiplier -= 0.5f;
+			modifier.DamageMultiplier *= 0.5f;
 
 			// Calculate final damage
 			skillHitResult = SCR_SkillHit(caster, target, skill, modifier);

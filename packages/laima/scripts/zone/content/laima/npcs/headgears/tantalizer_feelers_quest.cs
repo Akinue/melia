@@ -5,6 +5,7 @@ using Melia.Zone.World.Quests;
 using Melia.Zone.World.Quests.Objectives;
 using Melia.Zone.World.Quests.Rewards;
 using static Melia.Zone.Scripting.Shortcuts;
+using Melia.Zone.World.Actors.Characters;
 
 public class TantalizerFeelersQuestScript : QuestScript
 {
@@ -24,6 +25,7 @@ public class TantalizerFeelersQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -61,9 +63,6 @@ public class TantalizerFeelersQuestScript : QuestScript
 				if (player.Inventory.HasItem(VelwrigglerFeatherId, VelwrigglerFeatherAmount) &&
 					player.Inventory.HasItem(ThornballThornId, ThornballThornAmount))
 				{
-					player.Inventory.RemoveItem(VelwrigglerFeatherId, VelwrigglerFeatherAmount);
-					player.Inventory.RemoveItem(ThornballThornId, ThornballThornAmount);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("{#666666}*carefully arranges the specimens on a worn cloth, hands moving with practiced precision*{/}"));
 					await dialog.Msg(L("Extraordinary quality! With these feathers and thorns, I've crafted something special. Wear these feelers and you'll sense the world as these creatures do... or at least look like you might. A memento of the Gate Route's dark wonders."));
@@ -93,5 +92,11 @@ public class TantalizerFeelersQuestScript : QuestScript
 			default:
 				break;
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(VelwrigglerFeatherId, VelwrigglerFeatherAmount);
+		character.Inventory.RemoveItem(ThornballThornId, ThornballThornAmount);
 	}
 }

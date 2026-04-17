@@ -545,6 +545,15 @@ namespace Melia.Zone.World.Items
 					this.Properties.Remove(PropertyName.GemLevel);
 				}
 			}
+
+			if (this.Data.FireResistence != 0) this.Properties.SetFloat(PropertyName.RES_FIRE, this.Data.FireResistence);
+			if (this.Data.IceResistence != 0) this.Properties.SetFloat(PropertyName.RES_ICE, this.Data.IceResistence);
+			if (this.Data.LightningResistence != 0) this.Properties.SetFloat(PropertyName.RES_LIGHTNING, this.Data.LightningResistence);
+			if (this.Data.EarthResistence != 0) this.Properties.SetFloat(PropertyName.RES_EARTH, this.Data.EarthResistence);
+			if (this.Data.PoisonResistence != 0) this.Properties.SetFloat(PropertyName.RES_POISON, this.Data.PoisonResistence);
+			if (this.Data.HolyResistence != 0) this.Properties.SetFloat(PropertyName.RES_HOLY, this.Data.HolyResistence);
+			if (this.Data.DarkResistence != 0) this.Properties.SetFloat(PropertyName.RES_DARK, this.Data.DarkResistence);
+			if (this.Data.SoulResistence != 0) this.Properties.SetFloat(PropertyName.RES_SOUL, this.Data.SoulResistence);
 		}
 
 		/// <summary>
@@ -894,6 +903,9 @@ namespace Melia.Zone.World.Items
 			if (!this.NeedRandomOptions)
 				return;
 
+			for (var i = 1; i <= 4; i++)
+				this.RemoveRandomOption(i);
+
 			this.Properties.SetFloat(PropertyName.NeedRandomOption, 0);
 			var random = RandomProvider.Get();
 			var itemGrade = (ItemGrade)this.Properties.GetFloat(PropertyName.ItemGrade);
@@ -1132,7 +1144,7 @@ namespace Melia.Zone.World.Items
 			}
 			else if (isArmor)
 			{
-				return new List<string> {
+				var armorStats = new List<string> {
 					"STR", "DEX", "CON", "INT", "MNA",
 					"RHP", "RSP",
 					"CRTDR",
@@ -1142,6 +1154,11 @@ namespace Melia.Zone.World.Items
 					"SlashDEF", "AriesDEF", "StrikeDEF",
 					"RES_FIRE", "RES_ICE", "RES_LIGHTNING", "RES_POISON", "RES_EARTH", "RES_HOLY", "RES_DARK", "RES_SOUL",
 				};
+
+				if (this.Data.EquipType1 == EquipType.Boots)
+					armorStats.Add("MSPD");
+
+				return armorStats;
 			}
 
 			// Defaults to all stats
@@ -1169,7 +1186,7 @@ namespace Melia.Zone.World.Items
 		/// <param name="itemLevel"></param>
 		/// <param name="itemGradeModifier"></param>
 		/// <returns></returns>
-		private float GenerateRandomStatValue(string propertyName, float itemLevel, ItemGrade itemGrade, out float rngModifier)
+		public float GenerateRandomStatValue(string propertyName, float itemLevel, ItemGrade itemGrade, out float rngModifier)
 		{
 			var random = RandomProvider.Get();
 
@@ -1337,6 +1354,10 @@ namespace Melia.Zone.World.Items
 					rndValue = 1;
 					break;
 
+				case "MSPD":
+					rndValue = 1;
+					break;
+
 				default:
 					break;
 			}
@@ -1431,8 +1452,6 @@ namespace Melia.Zone.World.Items
 
 			if (!this.Properties.TryGetString(optionPropId, out var optionType))
 				return;
-			if (!this.Properties.TryGetFloat(optionPropGroup, out var optionGroup))
-				return;
 			if (!this.Properties.TryGetFloat(optionPropValue, out var optionValue))
 				return;
 
@@ -1470,7 +1489,7 @@ namespace Melia.Zone.World.Items
 		{
 			var random = RandomProvider.Get();
 			var options = random.Next(minOptions, maxOptions);
-			var utilOptions = new string[] { "CRTHR", "CRTDR", "BLK_BREAK", "BLK", "ADD_HR", "ADD_DR", "RHP", "SR" };
+			var utilOptions = new string[] { "CRTHR", "CRTDR", "BLK_BREAK", "BLK", "ADD_HR", "ADD_DR", "RHP", "SR", "MSPD" };
 			var atkOptions = new string[] { "ADD_CLOTH", "ADD_LEATHER", "ADD_IRON", "ADD_SMALLSIZE", "ADD_MIDDLESIZE",
 				"ADD_LARGESIZE", "ADD_GHOST", "ADD_FORESTER", "ADD_WIDLING", "ADD_VELIAS",
 				"ADD_PARAMUNE", "ADD_KLAIDA" };

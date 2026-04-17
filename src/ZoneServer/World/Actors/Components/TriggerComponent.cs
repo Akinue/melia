@@ -26,6 +26,13 @@ namespace Melia.Zone.World.Actors.Components
 		private readonly object _syncLock = new();
 
 		private List<IActor> _actorsInside = new();
+		private List<IActor> _actorsInsideBuffer = new();
+		private readonly HashSet<IActor> _actorsInsideSet = new();
+		private readonly HashSet<IActor> _nowInsideSet = new();
+		private readonly List<IActor> _tempEntered = new();
+		private readonly List<IActor> _tempLeft = new();
+		private readonly List<ICombatEntity> _attackableBuffer = new();
+		private readonly List<ICombatEntity> _alliedBuffer = new();
 		private int _actorCount = 0;
 		private int _maxActorCount = short.MaxValue;
 		private int _maxConcurrentUse = short.MaxValue;
@@ -65,7 +72,7 @@ namespace Melia.Zone.World.Actors.Components
 		/// <summary>
 		/// Returns the remaining life time of the trigger.
 		/// </summary>
-		public TimeSpan RemainingLifeTime => this.LifeTime != TimeSpan.MaxValue ? this.LifeTime - _lifetimeTimer : TimeSpan.MaxValue;
+		public TimeSpan RemainingLifeTime => this.LifeTime != TimeSpan.MaxValue ? Math2.Max(TimeSpan.Zero, this.LifeTime - _lifetimeTimer) : TimeSpan.MaxValue;
 
 		/// <summary>
 		/// Returns the number of actors currently inside the trigger.
@@ -184,7 +191,18 @@ namespace Melia.Zone.World.Actors.Components
 		public List<IActor> GetActors()
 		{
 			lock (_syncLock)
-				return _actorsInside.Take(this.MaxActorCount).ToList();
+			{
+				var result = new List<IActor>();
+				var count = 0;
+				foreach (var a in _actorsInside)
+				{
+					if (count >= this.MaxActorCount)
+						break;
+					result.Add(a);
+					count++;
+				}
+				return result;
+			}
 		}
 
 		/// <summary>
@@ -196,33 +214,57 @@ namespace Melia.Zone.World.Actors.Components
 		public List<TActor> GetActors<TActor>() where TActor : IActor
 		{
 			lock (_syncLock)
-				return _actorsInside.OfType<TActor>().ToList();
+			{
+				var result = new List<TActor>();
+				foreach (var a in _actorsInside)
+					if (a is TActor typed)
+						result.Add(typed);
+				return result;
+			}
 		}
 
 		/// <summary>
 		/// Returns a list of actors currently inside the trigger area
 		/// that can be attacked by the given actor.
 		/// </summary>
+		/// <remarks>
+		/// The returned list is reused between calls. Do not store
+		/// a reference to it — copy if you need to keep the data.
+		/// </remarks>
 		/// <param name="attacker"></param>
 		/// <returns></returns>
 		public List<ICombatEntity> GetAttackableEntities(ICombatEntity attacker)
 		{
 			lock (_syncLock)
-				return _actorsInside.OfType<ICombatEntity>().Where(attacker.CanDamage).ToList();
+			{
+				_attackableBuffer.Clear();
+				foreach (var a in _actorsInside)
+					if (a is ICombatEntity ce && attacker.CanDamage(ce))
+						_attackableBuffer.Add(ce);
+				return _attackableBuffer;
+			}
 		}
 
 		/// <summary>
 		/// Returns a list of actors currently inside the trigger area
 		/// that are allied to the given actor.
 		/// </summary>
+		/// <remarks>
+		/// The returned list is reused between calls. Do not store
+		/// a reference to it — copy if you need to keep the data.
+		/// </remarks>
 		/// <param name="ally"></param>
 		/// <returns></returns>
 		public List<ICombatEntity> GetAlliedEntities(ICombatEntity ally)
 		{
 			lock (_syncLock)
-				return _actorsInside.OfType<ICombatEntity>()
-					.Where(target => target != ally && !target.IsDead && ally.IsAlly(target))
-					.ToList();
+			{
+				_alliedBuffer.Clear();
+				foreach (var a in _actorsInside)
+					if (a is ICombatEntity target && target != ally && !target.IsDead && ally.IsAlly(target))
+						_alliedBuffer.Add(target);
+				return _alliedBuffer;
+			}
 		}
 
 		/// <summary>
@@ -231,11 +273,12 @@ namespace Melia.Zone.World.Actors.Components
 		/// <param name="elapsed"></param>
 		public void Update(TimeSpan elapsed)
 		{
-			// Make sure the elapsed time is not the full update time if we run
-			// for the first time, since the component might not have been around
-			// for the full update interval, which would mess with the update time
-			// calculations. We probably want to standardize this in some say,
-			// since this is generally what we would want to know. TODO.
+			// Make sure the elapsed time is not the full update time if
+			// we run for the first time, since the component might not
+			// have been around for the full update interval, which would
+			// mess with the update time calculations. We probably want to
+			// standardize this in some say, since this is generally what
+			// we would want to know. TODO.
 			if (!_elapsedInitalized)
 			{
 				elapsed = Math2.Max(TimeSpan.Zero, DateTime.Now - _creationTime);
@@ -267,27 +310,63 @@ namespace Melia.Zone.World.Actors.Components
 				}
 			}
 
+			// Advance the lifetime timer before firing events so that
+			// RemainingLifeTime is accurate when handlers read it.
+			if (this.LifeTime != TimeSpan.MaxValue)
+				_lifetimeTimer += elapsed;
+
 			this.Area.UpdatePosition(this.Actor.Position);
 
-			var nowInside = this.Actor.Map.GetActorsIn<IActor>(this.Area, this.IsValidTriggerer);
+			// Fill the back-buffer with current actors, reusing the list
+			this.Actor.Map.GetActorsIn<IActor>(this.Area, this.IsValidTriggerer, _actorsInsideBuffer);
 
 			lock (_syncLock)
 			{
-				var wereInside = _actorsInside;
+				// Build set of current actors for O(1) lookup
+				_nowInsideSet.Clear();
+				foreach (var a in _actorsInsideBuffer)
+					_nowInsideSet.Add(a);
 
-				var entered = nowInside.Except(wereInside);
-				var left = wereInside.Except(nowInside);
+				// Find entered actors (in now but not in previous)
+				_tempEntered.Clear();
+				foreach (var a in _nowInsideSet)
+					if (!_actorsInsideSet.Contains(a))
+						_tempEntered.Add(a);
 
-				foreach (var actor in entered)
+				// Find left actors (in previous but not in now)
+				_tempLeft.Clear();
+				foreach (var a in _actorsInsideSet)
+					if (!_nowInsideSet.Contains(a))
+						_tempLeft.Add(a);
+
+				foreach (var actor in _tempEntered)
 					this.Entered?.Invoke(this, new TriggerActorArgs(TriggerType.Enter, this.Actor, actor));
 
-				foreach (var actor in left)
+				foreach (var actor in _tempLeft)
 					this.Left?.Invoke(this, new TriggerActorArgs(TriggerType.Leave, this.Actor, actor));
 
-				_actorsInside = nowInside;
-				this.ActorCount = nowInside.Count;
+				// Swap buffers: _actorsInsideBuffer becomes the current
+				// list, old _actorsInside becomes the next write target
+				var temp = _actorsInside;
+				_actorsInside = _actorsInsideBuffer;
+				_actorsInsideBuffer = temp;
+
+				_actorsInsideSet.Clear();
+				foreach (var a in _actorsInside)
+					_actorsInsideSet.Add(a);
+				this.ActorCount = _actorsInside.Count;
 			}
 
+			this.UpdateTimers(elapsed);
+		}
+
+		/// <summary>
+		/// Updates the update and lifetime timers and triggers relevant
+		/// events.
+		/// </summary>
+		/// <param name="elapsed"></param>
+		private void UpdateTimers(TimeSpan elapsed)
+		{
 			_updateTimer += elapsed;
 
 			if (_updateTimer >= this.UpdateInterval)
@@ -298,8 +377,6 @@ namespace Melia.Zone.World.Actors.Components
 
 			if (this.LifeTime != TimeSpan.MaxValue)
 			{
-				_lifetimeTimer += elapsed;
-
 				if (_lifetimeTimer >= this.LifeTime)
 				{
 					this.DestroyOwner();

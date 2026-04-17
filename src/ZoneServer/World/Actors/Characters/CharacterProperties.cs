@@ -1,15 +1,15 @@
 ﻿using System;
 using Melia.Shared.Game.Const;
 using Melia.Shared.ObjectProperties;
+using Melia.Zone.Buffs;
 using Melia.Zone.Network;
-using Yggdrasil.Util;
 using Melia.Zone.Scripting;
 using Melia.Zone.World.Items;
-using Melia.Zone.Buffs;
 using Melia.Shared.Data.Database;
 using Melia.Shared.Game.Properties;
 using Melia.Zone.World.Actors.Characters.Components;
 using Melia.Zone.World.Actors.Monsters;
+using Yggdrasil.Util;
 
 namespace Melia.Zone.World.Actors.Characters
 {
@@ -231,8 +231,8 @@ namespace Melia.Zone.World.Actors.Characters
 			this.AutoUpdate(PropertyName.INT_ADD, [PropertyName.INT_BM, PropertyName.INT_Bonus, PropertyName.INT_ITEM_BM]);
 			this.AutoUpdate(PropertyName.MNA_ADD, [PropertyName.MNA_BM, PropertyName.MNA_Bonus, PropertyName.MNA_ITEM_BM]);
 			this.AutoUpdate(PropertyName.DEX_ADD, [PropertyName.DEX_BM, PropertyName.DEX_Bonus, PropertyName.DEX_ITEM_BM]);
-			this.AutoUpdate(PropertyName.MHP, [PropertyName.Lv, PropertyName.CON, PropertyName.MHP_BM, PropertyName.MHP_Bonus]);
-			this.AutoUpdate(PropertyName.MSP, [PropertyName.Lv, PropertyName.MNA, PropertyName.MSP_BM, PropertyName.MSP_Bonus]);
+			this.AutoUpdate(PropertyName.MHP, [PropertyName.Lv, PropertyName.CON, PropertyName.MHP_BM, PropertyName.MHP_RATE_BM, PropertyName.MHP_Bonus]);
+			this.AutoUpdate(PropertyName.MSP, [PropertyName.Lv, PropertyName.MNA, PropertyName.MSP_BM, PropertyName.MSP_RATE_BM, PropertyName.MSP_Bonus]);
 			this.AutoUpdate(PropertyName.StatPoint, [PropertyName.StatByLevel, PropertyName.StatByBonus, PropertyName.UsedStat]);
 			this.AutoUpdate(PropertyName.MSPD, [PropertyName.FIXMSPD_BM, PropertyName.MSPD_BM, PropertyName.MSPD_Bonus]);
 			this.AutoUpdate(PropertyName.CastingSpeed, [PropertyName.DEX, PropertyName.CastingSpeed_BM]);
@@ -240,23 +240,25 @@ namespace Melia.Zone.World.Actors.Characters
 			this.AutoUpdate(PropertyName.DEF, [PropertyName.Lv, PropertyName.DEF_BM, PropertyName.DEF_RATE_BM]);
 			this.AutoUpdate(PropertyName.MDEF, [PropertyName.Lv, PropertyName.MNA, PropertyName.MDEF_BM, PropertyName.MDEF_RATE_BM]);
 			this.AutoUpdate(PropertyName.CRTATK, [PropertyName.Lv, PropertyName.DEX, PropertyName.CRTATK_BM]);
-			this.AutoUpdate(PropertyName.CRTHR, [PropertyName.Lv, PropertyName.DEX, PropertyName.CRTHR_BM]);
-			this.AutoUpdate(PropertyName.CRTDR, [PropertyName.Lv, PropertyName.CON, PropertyName.CRTDR_BM]);
+			this.AutoUpdate(PropertyName.CRTHR, [PropertyName.Lv, PropertyName.DEX, PropertyName.CRTHR_BM, PropertyName.CRTHR_RATE_BM]);
+			this.AutoUpdate(PropertyName.CRTDR, [PropertyName.Lv, PropertyName.CON, PropertyName.CRTDR_BM, PropertyName.CRTDR_RATE_BM]);
 			this.AutoUpdate(PropertyName.HR, [PropertyName.Lv, PropertyName.DEX, PropertyName.HR_BM, PropertyName.HR_RATE_BM]);
 			this.AutoUpdate(PropertyName.DR, [PropertyName.Lv, PropertyName.DEX, PropertyName.DR_BM, PropertyName.DR_RATE_BM]);
 			this.AutoUpdate(PropertyName.BLK, [PropertyName.Lv, PropertyName.CON, PropertyName.BLK_BM, PropertyName.BLK_RATE_BM]);
 			this.AutoUpdate(PropertyName.BLK_BREAK, [PropertyName.Lv, PropertyName.STR, PropertyName.BLK_BREAK_BM, PropertyName.BLK_BREAK_RATE_BM]);
-			this.AutoUpdate(PropertyName.HEAL_PWR, [PropertyName.Lv, PropertyName.INT, PropertyName.MNA, PropertyName.HEAL_PWR_BM, PropertyName.HEAL_PWR_RATE_BM]);
+			this.AutoUpdate(PropertyName.HEAL_PWR, [PropertyName.Lv, PropertyName.INT, PropertyName.MNA, PropertyName.HEAL_PWR_BM, PropertyName.HEAL_PWR_RATE_BM, PropertyName.MINPATK, PropertyName.MAXPATK, PropertyName.MINMATK, PropertyName.MAXMATK]);
 			this.AutoUpdate(PropertyName.SR, [PropertyName.SR_BM]);
 			this.AutoUpdate(PropertyName.SDR, [PropertyName.FixedMinSDR_BM, PropertyName.SDR_BM]);
 			this.AutoUpdate(PropertyName.MaxSta, [PropertyName.CON, PropertyName.MAXSTA_Bonus, PropertyName.MaxSta_BM]);
 			this.AutoUpdate(PropertyName.Sta_Run, [PropertyName.DashRun]);
 			this.AutoUpdate(PropertyName.Sta_Recover, [PropertyName.REST_BM, PropertyName.RSta_BM]);
+			this.AutoUpdate(PropertyName.RHP, [PropertyName.MHP, PropertyName.CON, PropertyName.RHP_BM]);
+			this.AutoUpdate(PropertyName.RSP, [PropertyName.MSP, PropertyName.MNA, PropertyName.RSP_BM]);
 			this.AutoUpdate(PropertyName.MINPATK, [PropertyName.Lv, PropertyName.STR, PropertyName.PATK_BM, PropertyName.MINPATK_BM, PropertyName.PATK_MAIN_BM, PropertyName.MINPATK_MAIN_BM, PropertyName.PATK_RATE_BM, PropertyName.MINPATK_RATE_BM, PropertyName.PATK_MAIN_RATE_BM, PropertyName.MINPATK_MAIN_RATE_BM]);
 			this.AutoUpdate(PropertyName.MAXPATK, [PropertyName.Lv, PropertyName.STR, PropertyName.PATK_BM, PropertyName.MAXPATK_BM, PropertyName.PATK_MAIN_BM, PropertyName.MAXPATK_MAIN_BM, PropertyName.PATK_RATE_BM, PropertyName.MAXPATK_RATE_BM, PropertyName.PATK_MAIN_RATE_BM, PropertyName.MAXPATK_MAIN_RATE_BM]);
 			this.AutoUpdate(PropertyName.MINMATK, [PropertyName.Lv, PropertyName.INT, PropertyName.MATK_BM, PropertyName.MINMATK_BM, PropertyName.MATK_RATE_BM, PropertyName.MINMATK_RATE_BM]);
 			this.AutoUpdate(PropertyName.MAXMATK, [PropertyName.Lv, PropertyName.INT, PropertyName.MATK_BM, PropertyName.MAXMATK_BM, PropertyName.MATK_RATE_BM, PropertyName.MAXMATK_RATE_BM]);
-			this.AutoUpdate(PropertyName.MaxWeight, [PropertyName.CON, PropertyName.STR, PropertyName.MaxWeight_BM, PropertyName.MaxWeight_Bonus]);
+			this.AutoUpdate(PropertyName.MaxWeight, [PropertyName.CON, PropertyName.STR, PropertyName.MaxWeight_BM, PropertyName.MaxWeight_RATE_BM, PropertyName.MaxWeight_Bonus]);
 			this.AutoUpdate(PropertyName.MovingShot, [PropertyName.MovingShot_BM, PropertyName.MovingShotable]);
 			this.AutoUpdate(PropertyName.MovingShotable, [PropertyName.MovingShot_BM]);
 			this.AutoUpdate(PropertyName.LootingChance, [PropertyName.LootingChance_BM]);
@@ -311,9 +313,6 @@ namespace Melia.Zone.World.Actors.Characters
 			// as those properties are affected by the sitting status.
 			this.Character.SitStatusChanged += this.SitStatusChanged;
 
-			// Update some special properties when character's stats change
-			this.Character.StatChanged += this.OnStatChanged;
-
 			// Subscribe to equipment changes, as any number of properties
 			// might make use of equipment stats
 			if (this.Character.Inventory != null)
@@ -338,6 +337,15 @@ namespace Melia.Zone.World.Actors.Characters
 			if (this.TryGet<CFloatProperty>(PropertyName.DEX, out var dexProperty))
 				dexProperty.ValueChanged += this.OnSkillSpeedPropertyChanged;
 
+			// Subscribe to CastingSpeed and MSPD property changes to
+			// automatically send client update packets whenever any
+			// effect changes these values (buffs, equipment, trinkets, etc.)
+			if (this.TryGet<CFloatProperty>(PropertyName.CastingSpeed, out var castingSpeedProperty))
+				castingSpeedProperty.ValueChanged += this.OnCastingSpeedChanged;
+
+			if (this.TryGet<CFloatProperty>(PropertyName.MSPD, out var mspdProperty))
+				mspdProperty.ValueChanged += this.OnMovementSpeedChanged;
+
 			// Subscribe to property changes that affect companion stats
 			this.SubscribeCompanionPropertyUpdates();
 		}
@@ -349,9 +357,6 @@ namespace Melia.Zone.World.Actors.Characters
 		{
 			// Unsubscribe from sit status changes
 			this.Character.SitStatusChanged -= this.SitStatusChanged;
-
-			// Unsubscribe from stat changes
-			this.Character.StatChanged -= this.OnStatChanged;
 
 			// Unsubscribe from equipment changes
 			this.Character.Inventory.Equipped -= this.OnEquipmentChanged;
@@ -368,6 +373,13 @@ namespace Melia.Zone.World.Actors.Characters
 
 			if (this.TryGet<CFloatProperty>(PropertyName.DEX, out var dexProperty))
 				dexProperty.ValueChanged -= this.OnSkillSpeedPropertyChanged;
+
+			// Unsubscribe from CastingSpeed and MSPD property changes
+			if (this.TryGet<CFloatProperty>(PropertyName.CastingSpeed, out var castingSpeedProperty))
+				castingSpeedProperty.ValueChanged -= this.OnCastingSpeedChanged;
+
+			if (this.TryGet<CFloatProperty>(PropertyName.MSPD, out var mspdProperty))
+				mspdProperty.ValueChanged -= this.OnMovementSpeedChanged;
 
 			// Unsubscribe from companion property updates
 			this.UnsubscribeCompanionPropertyUpdates();
@@ -447,10 +459,16 @@ namespace Melia.Zone.World.Actors.Characters
 
 			this.InvalidateAll();
 			Send.ZC_OBJECT_PROPERTY(this.Character);
-			Send.ZC_CASTING_SPEED(this.Character);
 			Send.ZC_UPDATE_SKL_SPDRATE_LIST(this.Character, this.Character.Skills.GetList());
-			if (buff.AffectsMovementSpeed())
-				Send.ZC_MSPD(this.Character);
+
+			if (this.Character.Companions?.HasCompanions == true)
+			{
+				foreach (var companion in this.Character.Companions.GetList())
+				{
+					companion.Properties.InvalidateAll();
+					Send.ZC_OBJECT_PROPERTY(this.Character.Connection, companion);
+				}
+			}
 		}
 
 		/// <summary>
@@ -490,12 +508,21 @@ namespace Melia.Zone.World.Actors.Characters
 		}
 
 		/// <summary>
-		/// Sends necessary updates to a character when their stats change.
+		/// Called when the CastingSpeed property changes to update the client.
 		/// </summary>
-		/// <param name="character"></param>
-		private void OnStatChanged(Character character)
+		/// <param name="propertyName"></param>
+		private void OnCastingSpeedChanged(string propertyName)
 		{
-			Send.ZC_CASTING_SPEED(character);
+			Send.ZC_CASTING_SPEED(this.Character);
+		}
+
+		/// <summary>
+		/// Called when the MSPD property changes to update the client.
+		/// </summary>
+		/// <param name="propertyName"></param>
+		private void OnMovementSpeedChanged(string propertyName)
+		{
+			Send.ZC_MSPD(this.Character);
 		}
 
 		/// <summary>

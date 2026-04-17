@@ -27,6 +27,25 @@ namespace Melia.Zone.World.Actors.Characters.Components
 		private readonly Dictionary<int, Item> _cards = new();
 
 		/// <summary>
+		/// Clears all internal collections to release item references
+		/// for GC after the character has been saved and removed from
+		/// the world.
+		/// </summary>
+		public void ReleaseAll()
+		{
+			lock (_syncLock)
+			{
+				foreach (var list in _items.Values)
+					list.Clear();
+				_items.Clear();
+				_itemsWorldIndex.Clear();
+				_equip.Clear();
+				_warehouse.Clear();
+				_cards.Clear();
+			}
+		}
+
+		/// <summary>
 		/// Raised when the character equipped an item.
 		/// </summary>
 		public event Action<Character, Item> Equipped;
@@ -59,6 +78,29 @@ namespace Melia.Zone.World.Actors.Characters.Components
 
 			lock (_syncLock)
 				return _equip.Where(a => (int)a.Key <= InventoryDefaults.EquipSlotCount).OrderBy(a => a.Key).Select(a => a.Value.Id).ToArray();
+		}
+
+		/// <summary>
+		/// Returns list of ids of equipped items with briquetting
+		/// appearance overrides applied, in the order of EquipSlot.
+		/// If an equipped item has a BriquettingIndex property set,
+		/// that value is used instead of the actual item id.
+		/// </summary>
+		/// <returns></returns>
+		public int[] GetVisualEquipIds()
+		{
+			lock (_syncLock)
+			{
+				return _equip
+					.Where(a => (int)a.Key <= InventoryDefaults.EquipSlotCount)
+					.OrderBy(a => a.Key)
+					.Select(a =>
+					{
+						var briquettingIndex = (int)a.Value.Properties.GetFloat(PropertyName.BriquettingIndex);
+						return briquettingIndex > 0 ? briquettingIndex : a.Value.Id;
+					})
+					.ToArray();
+			}
 		}
 
 		/// <summary>
@@ -268,7 +310,7 @@ namespace Melia.Zone.World.Actors.Characters.Components
 					for (var i = 0; i < category.Value.Count; ++i)
 					{
 						var index = category.Value[i].GetInventoryIndex(i);
-						var itemObjectId = category.Value[i].Id;
+						var itemObjectId = category.Value[i].ObjectId;
 
 						result.Add(index, itemObjectId);
 					}
@@ -295,7 +337,7 @@ namespace Melia.Zone.World.Actors.Characters.Components
 				for (var i = 0; i < items.Count; ++i)
 				{
 					var index = items[i].GetInventoryIndex(i);
-					var itemObjectId = items[i].Id;
+					var itemObjectId = items[i].ObjectId;
 
 					result.Add(index, itemObjectId);
 				}
@@ -514,15 +556,16 @@ namespace Melia.Zone.World.Actors.Characters.Components
 			if (inventoryType == InventoryType.Inventory)
 				this.UpdateWeight();
 
-			// Temp fix. The amounts on item stacks that items were added
-			// to are sometimes wrong, a full updates fixes that. Maybe
-			// ZC_ITEM_ADD needs an update.
+			// The server's item list uses position-based indices that shift
+			// when items are removed. The client doesn't re-index on its
+			// own after ZC_ITEM_REMOVE, so we send a lightweight index
+			// list for the affected category to keep client indices in
+			// sync. This replaces a previous workaround that re-sent the
+			// entire inventory (ZC_ITEM_INVENTORY_DIVISION_LIST) which
+			// caused massive client lag with large inventories.
 			if (Versions.Client > KnownVersions.ClosedBeta1)
 			{
-				// Note: Not sending ZC_ITEM_INVENTORY_DIVISION_LIST is causing
-				// client to mix up the boss cards when unequipping them.
-				// There's some kind of caching going on for these items.
-				Send.ZC_ITEM_INVENTORY_DIVISION_LIST(this.Character);
+				Send.ZC_ITEM_INVENTORY_INDEX_LIST(this.Character, item.Data.Category);
 				Send.ZC_EQUIP_GEM_INFO(this.Character);
 			}
 
@@ -638,14 +681,19 @@ namespace Melia.Zone.World.Actors.Characters.Components
 						_itemsWorldIndex[item.ObjectId] = item;
 						break;
 					default:
-						_items[cat].Add(item);
+						if (!_items.TryGetValue(cat, out var categoryList))
+							return;
+						categoryList.Add(item);
 						_itemsWorldIndex[item.ObjectId] = item;
 						break;
 				}
 
 				if (!silent)
 				{
-					var categoryIndex = item.GetInventoryIndex(_items[cat].Count - 1);
+					var itemCount = inventoryType == InventoryType.PersonalStorage
+						? _warehouse.Count
+						: _items.TryGetValue(cat, out var catItems) ? catItems.Count : 0;
+					var categoryIndex = item.GetInventoryIndex(itemCount - 1);
 					Send.ZC_ITEM_ADD(this.Character, item, categoryIndex, item.Amount, addType, inventoryType, notificationDelay);
 
 					if (ZoneServer.Instance.Conf.Log.LogItems)
@@ -677,7 +725,8 @@ namespace Melia.Zone.World.Actors.Characters.Components
 						result.Add(index);
 						break;
 					default:
-						var categoryItems = _items[cat];
+						if (!_items.TryGetValue(cat, out var categoryItems))
+							break;
 						for (var i = 0; i < categoryItems.Count; ++i)
 						{
 							var item = categoryItems[i];
@@ -796,7 +845,9 @@ namespace Melia.Zone.World.Actors.Characters.Components
 
 			// Update client (consistent with regular equipment)
 			Send.ZC_ITEM_REMOVE(this.Character, item.ObjectId, 1, InventoryItemRemoveMsg.Equipped, InventoryType.Inventory);
+			Send.ZC_ITEM_INVENTORY_INDEX_LIST(this.Character, item.Data.Category);
 			Send.ZC_EQUIP_CARD_INFO(this.Character);
+			Send.ZC_UPDATED_PCAPPEARANCE(this.Character);
 
 			this.ProcessCardScript(item);
 
@@ -832,6 +883,7 @@ namespace Melia.Zone.World.Actors.Characters.Components
 			Zone.Items.Effects.CardMetadataRegistry.Instance.Remove(item.ObjectId);
 
 			Send.ZC_EQUIP_CARD_INFO(this.Character);
+			Send.ZC_UPDATED_PCAPPEARANCE(this.Character);
 
 			this.Add(item, InventoryAddType.NotNew);
 
@@ -961,43 +1013,72 @@ namespace Melia.Zone.World.Actors.Characters.Components
 			if (item == null)
 				return InventoryResult.ItemNotFound;
 
-			// Unequip existing item first.
-			var collision = false;
-			var secondCollision = false;
-			var thirdCollision = false;
+			// Check job-based weapon restrictions
+			if (!item.Data.CanJobEquip(this.Character.JobClass))
+				return InventoryResult.InvalidSlot;
+
+			// Handle weapon slot conflicts between RH and LH.
+			// Read current equip state under lock, then unequip outside it
+			// since Unequip also acquires the lock.
+			var unequipLH = false;
+			var unequipRH = false;
+			var redirectToRH = false;
+
 			lock (_syncLock)
 			{
-				collision = _equip[slot] is not DummyEquipItem;
+				var rhItem = _equip[EquipSlot.RightHand];
+				var lhItem = _equip[EquipSlot.LeftHand];
+				var rhOccupied = rhItem is not DummyEquipItem;
+				var lhOccupied = lhItem is not DummyEquipItem;
+
 				if (slot == EquipSlot.RightHand)
-					secondCollision = _equip[EquipSlot.LeftHand] is not DummyEquipItem;
-				if (slot == EquipSlot.LeftHand)
-					thirdCollision = _equip[EquipSlot.RightHand] is not DummyEquipItem;
-			}
-
-			if (secondCollision)
-			{
-				var newItemOneHanded = item.Data.IsOneHanded;
-				var equippedItemTwoHanded = _equip[slot].Data.IsTwoHanded;
-				if ((newItemOneHanded && equippedItemTwoHanded)
-					|| (!newItemOneHanded && !equippedItemTwoHanded))
-					this.Unequip(EquipSlot.LeftHand);
-			}
-
-			if (thirdCollision)
-			{
-				var itemIsWeapon = item.Data.Group == ItemGroup.Weapon;
-				var equippedItemOneHanded = _equip[EquipSlot.RightHand].Data.Group == ItemGroup.Weapon;
-				if (itemIsWeapon && equippedItemOneHanded)
 				{
-					this.Unequip(EquipSlot.RightHand);
-					slot = EquipSlot.RightHand;
+					if (lhOccupied)
+					{
+						var newIsTwoHanded = item.Data.IsTwoHanded;
+						var lhIsTrinket = lhItem.Data.EquipType1 == EquipType.Trinket;
+
+						// Equipping a 2H weapon: unequip LH if it's not a trinket
+						// Equipping a 1H weapon: unequip LH if it's a trinket (trinkets pair with 2H only)
+						if ((newIsTwoHanded && !lhIsTrinket) || (!newIsTwoHanded && lhIsTrinket))
+							unequipLH = true;
+					}
+				}
+				else if (slot == EquipSlot.LeftHand)
+				{
+					if (rhOccupied)
+					{
+						var rhIsTwoHanded = rhItem.Data.IsTwoHanded;
+						var newIsTrinket = item.Data.EquipType1 == EquipType.Trinket;
+
+						// Equipping a trinket to LH: unequip RH if it's a 1H weapon (trinkets pair with 2H only)
+						// Equipping a non-trinket to LH: unequip RH if it's a 2H weapon (daggers/shields pair with 1H only)
+						if ((newIsTrinket && !rhIsTwoHanded) || (!newIsTrinket && rhIsTwoHanded))
+							unequipRH = true;
+					}
+
+					// If equipping a main weapon (Weapon group) to LH and RH has a 1H weapon,
+					// move the new weapon to RH instead
+					if (rhOccupied && !unequipRH && item.Data.Group == ItemGroup.Weapon && rhItem.Data.Group == ItemGroup.Weapon)
+						redirectToRH = true;
 				}
 			}
 
-			if (collision)
+			if (unequipLH)
+				this.Unequip(EquipSlot.LeftHand);
+
+			if (unequipRH)
+				this.Unequip(EquipSlot.RightHand);
+
+			if (redirectToRH)
 			{
-				this.Unequip(slot);
+				this.Unequip(EquipSlot.RightHand);
+				slot = EquipSlot.RightHand;
 			}
+
+			// Unequip existing item in the target slot
+			if (this.GetItem(slot) is not DummyEquipItem)
+				this.Unequip(slot);
 
 			// Equip new item
 			lock (_syncLock)
@@ -1012,9 +1093,9 @@ namespace Melia.Zone.World.Actors.Characters.Components
 
 			// Update client
 			Send.ZC_ITEM_REMOVE(this.Character, item.ObjectId, 1, InventoryItemRemoveMsg.Equipped, InventoryType.Inventory);
+			Send.ZC_ITEM_INVENTORY_INDEX_LIST(this.Character, item.Data.Category);
 			Send.ZC_ITEM_EQUIP_LIST(this.Character);
 			Send.ZC_UPDATED_PCAPPEARANCE(this.Character);
-			//Send.ZC_ITEM_INVENTORY_DIVISION_LIST(this.Character);
 			Send.ZC_EQUIP_GEM_INFO(this.Character);
 
 			if (this.Character.IsOutOfBody())
@@ -1236,12 +1317,9 @@ namespace Melia.Zone.World.Actors.Characters.Components
 			// We need to update the indices after removing an item,
 			// because we'll run into issues with the client potentially
 			// misidentifying items otherwise, caused by duplicate indices.
-			// Alternatively, we could revamp our index handling, so there's
-			// no more risk for duplicates.
-			//Send.ZC_ITEM_INVENTORY_INDEX_LIST(this.Character, item.Data.Category);
 			if (!silently)
 			{
-				//Send.ZC_ITEM_INVENTORY_DIVISION_LIST(this.Character);
+				Send.ZC_ITEM_INVENTORY_INDEX_LIST(this.Character, item.Data.Category);
 				Send.ZC_EQUIP_GEM_INFO(this.Character);
 
 				this.UpdateWeight();
@@ -1343,8 +1421,8 @@ namespace Melia.Zone.World.Actors.Characters.Components
 				}
 
 				Send.ZC_ITEM_REMOVE(this.Character, item.ObjectId, reduce, msg, InventoryType.Inventory);
-				//Send.ZC_ITEM_INVENTORY_INDEX_LIST(this.Character, item.Data.Category);
-				//Send.ZC_ITEM_INVENTORY_DIVISION_LIST(this.Character);
+				if (reduce == itemAmount)
+					Send.ZC_ITEM_INVENTORY_INDEX_LIST(this.Character, item.Data.Category);
 				Send.ZC_EQUIP_GEM_INFO(this.Character);
 			}
 

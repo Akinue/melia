@@ -8,6 +8,7 @@ using Melia.Shared.World;
 using Melia.Zone.Network;
 using Melia.Zone.Skills.Combat;
 using Melia.Zone.Skills.Handlers.Base;
+using Melia.Zone.Scripting;
 using Melia.Zone.World.Actors;
 using Melia.Zone.World.Actors.Characters;
 using static Melia.Zone.Skills.Helpers.SkillDamageHelper;
@@ -20,16 +21,14 @@ namespace Melia.Zone.Skills.Handlers.Priest
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Priest_Sacrament)]
-	public class Priest_SacramentOverride : IMeleeGroundSkillHandler
+	public class Priest_SacramentOverride : IGroundSkillHandler
 	{
 		private const int HolyWeaponBuffDurationSeconds = 300;
 		private const float HolyWeaponBuffRadius = 100f;
 		private const int DebuffDurationMilliseconds = 15000;
 		private const float DebuffRadius = 100f;
 		private const float DebuffHolyDamageBonusPerLevel = 0.01f;
-		private const float AbilityBonus = 0.005f;
-
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -57,10 +56,8 @@ namespace Melia.Zone.Skills.Handlers.Priest
 
 			var damageBonus = skill.Level * DebuffHolyDamageBonusPerLevel;
 
-			var byAbility = 1f;
-			if (caster.TryGetActiveAbilityLevel(AbilityId.Priest29, out var abilityLevel))
-				byAbility += abilityLevel * AbilityBonus;
-			damageBonus *= byAbility;
+			var SCR_Get_AbilityReinforceRate = ScriptableFunctions.Skill.Get("SCR_Get_AbilityReinforceRate");
+			damageBonus *= 1f + SCR_Get_AbilityReinforceRate(skill);
 
 			var hits = new List<SkillHitInfo>();
 			foreach (var target in targets)

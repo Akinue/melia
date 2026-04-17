@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.Dialogues;
 using Melia.Zone.Scripting.Extensions.LivelyDialog;
@@ -7,6 +7,7 @@ using Melia.Zone.World.Quests.Objectives;
 using Melia.Zone.World.Quests.Prerequisites;
 using Melia.Zone.World.Quests.Rewards;
 using static Melia.Zone.Scripting.Shortcuts;
+using Melia.Zone.World.Actors.Characters;
 
 public class LotusLeafQuestScript : QuestScript
 {
@@ -24,6 +25,7 @@ public class LotusLeafQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -62,15 +64,12 @@ public class LotusLeafQuestScript : QuestScript
 					player.Inventory.HasItem(HanamingPetalId, 30))
 				{
 					// Remove materials
-					player.Inventory.RemoveItem(LeafBugShellId, 50);
-					player.Inventory.RemoveItem(HanamingPetalId, 30);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("Perfect! These materials are exactly what I needed. Here's your Lotus Leaf headpiece - may it bring you closer to nature's beauty!"));
 				}
 				else
 				{
-					await dialog.Msg("Umm sorry you seem to be missing a few items. I need 50 Leaf Bug Shells and 30 Hanaming Petals.");
+					await dialog.Msg(L("Umm sorry you seem to be missing a few items. I need 50 Leaf Bug Shells and 30 Hanaming Petals."));
 				}
 			}
 			else
@@ -97,5 +96,11 @@ public class LotusLeafQuestScript : QuestScript
 			default:
 				break;
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(LeafBugShellId, 50);
+		character.Inventory.RemoveItem(HanamingPetalId, 30);
 	}
 }

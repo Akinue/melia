@@ -78,7 +78,7 @@ namespace Melia.Web.Controllers.Api
 					return;
 				}
 
-				if (!WebServer.Instance.Database.CreateAccount(request.Username, request.Password1))
+					if (!WebServer.Instance.Database.CreateAccount(request.Username, request.Password1))
 				{
 					await this.Error("Failed to create account. Please try again later.");
 					return;

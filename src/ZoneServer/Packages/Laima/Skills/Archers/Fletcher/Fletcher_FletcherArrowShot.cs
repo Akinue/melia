@@ -12,7 +12,7 @@ using Melia.Zone.World.Actors;
 using Melia.Zone.World.Actors.CombatEntities.Components;
 using static Melia.Zone.Skills.SkillUseFunctions;
 using Melia.Zone.Buffs;
-using SplashAreas = Melia.Zone.Skills.SplashAreas;
+using Melia.Zone.Skills.SplashAreas;
 
 namespace Melia.Zone.Skills.Handlers.Archers.Fletcher
 {
@@ -151,17 +151,6 @@ namespace Melia.Zone.Skills.Handlers.Archers.Fletcher
 			skill.IncreaseOverheat();
 			caster.TurnTowards(target);
 			caster.SetAttackState(true);
-			var mspd = caster.Properties.GetFloat(PropertyName.MSPD) * caster.Properties.GetFloat(PropertyName.MovingShot);
-			var isMoving = caster.Components.Get<MovementComponent>()?.IsMoving ?? false;
-			if (isMoving)
-			{
-				if (mspd > 50)
-					Send.ZC_PLAY_ANI(caster, "ATKRUN2");
-				else
-					Send.ZC_PLAY_ANI(caster, "ATKMOVE2");
-			}
-			else
-				Send.ZC_PLAY_ANI(caster, "SKL_CHARGESHOT_SHOT");
 
 			Send.ZC_NORMAL.UpdateSkillEffect(caster, 0, caster.Position, caster.Direction, Position.Zero);
 			selectedBuff.DecreaseOverbuff();
@@ -279,8 +268,7 @@ namespace Melia.Zone.Skills.Handlers.Archers.Fletcher
 			Send.ZC_GROUND_EFFECT(caster, target.Position, "F_archer_caltrop_hit_explosion", 1f, 0, 0.1f);
 			Send.ZC_SKILL_FORCE_TARGET(caster, target, fletcherSkill, forceId, null);
 
-			var splashParam = buffSkill.GetSplashParameters(caster, target.Position, target.Position, length: 70, width: 70, angle: 0);
-			var splashArea = buffSkill.GetSplashArea(SplashType.Circle, splashParam);
+			var splashArea = new Circle(target.Position, 60);
 			var targets = caster.Map.GetAttackableEnemiesIn(caster, splashArea).LimitBySDR(caster, buffSkill);
 
 			foreach (var aoeTarget in targets)

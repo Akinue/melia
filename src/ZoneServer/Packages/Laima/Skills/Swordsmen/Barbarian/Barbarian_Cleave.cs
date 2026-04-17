@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Melia.Shared.Packages;
@@ -22,9 +22,9 @@ namespace Melia.Zone.Skills.Handlers.Swordsman.Barbarian
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Barbarian_Cleave)]
-	public class Barbarian_CleaveOverride : IMeleeGroundSkillHandler
+	public class Barbarian_CleaveOverride : IGroundSkillHandler
 	{
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -61,7 +61,7 @@ namespace Melia.Zone.Skills.Handlers.Swordsman.Barbarian
 
 				if (skillHitResult.Damage > 0)
 				{
-					var debuffDuration = TimeSpan.FromSeconds(5);
+					var debuffDuration = TimeSpan.FromSeconds(10);
 					target.StartBuff(BuffId.Cleave_Debuff, skill.Level, 0, debuffDuration, caster);
 				}
 

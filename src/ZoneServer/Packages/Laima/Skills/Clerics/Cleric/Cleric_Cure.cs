@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using Melia.Shared.Packages;
 using Melia.Shared.Data.Database;
@@ -7,6 +7,7 @@ using Melia.Shared.L10N;
 using Melia.Shared.World;
 using Melia.Zone.Network;
 using Melia.Zone.Skills.Handlers.Base;
+using Melia.Zone.Scripting;
 using Melia.Zone.World.Actors;
 using Melia.Zone.World.Actors.CombatEntities.Components;
 using Yggdrasil.Util;
@@ -18,7 +19,7 @@ namespace Melia.Zone.Skills.Handlers.Clerics.Cleric
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Cleric_Cure)]
-	public class Cleric_CureOverride : IMeleeGroundSkillHandler
+	public class Cleric_CureOverride : IGroundSkillHandler
 	{
 		/// <summary>
 		/// Handles skill, removing debuffs from target.
@@ -28,7 +29,7 @@ namespace Melia.Zone.Skills.Handlers.Clerics.Cleric
 		/// <param name="originPos"></param>
 		/// <param name="farPos"></param>
 		/// <param name="targets"></param>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -39,18 +40,14 @@ namespace Melia.Zone.Skills.Handlers.Clerics.Cleric
 			skill.IncreaseOverheat();
 			caster.SetAttackState(true);
 
-			var target = targets.FirstOrDefault();
-			if (target == null)
-				target = caster;
+			target ??= caster;
 
 			this.RemoveDebuffs(caster, target, skill);
 
 			var buffDuration = 5000 + skill.Level * 2000;
 
-			var byAbility = 1f;
-			if (caster.TryGetActiveAbilityLevel(AbilityId.Cleric11, out var level))
-				byAbility += level * 0.005f;
-			buffDuration = (int)(buffDuration * byAbility);
+			var SCR_Get_AbilityReinforceRate = ScriptableFunctions.Skill.Get("SCR_Get_AbilityReinforceRate");
+			buffDuration = (int)(buffDuration * (1f + SCR_Get_AbilityReinforceRate(skill)));
 
 			target.StartBuff(BuffId.Cure_Buff, TimeSpan.FromMilliseconds(buffDuration));
 

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -23,13 +23,13 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Rogue
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Rogue_KnifeThrowing)]
-	public class Rogue_KnifeThrowingOverride : IMeleeGroundSkillHandler
+	public class Rogue_KnifeThrowingOverride : IGroundSkillHandler
 	{
 		private const float BackAttackAngle = 90f;
 		private const float BackAttackDamageMultiplier = 1.0f;
 		private const float DebuffDuration = 10000f;
 
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -91,7 +91,7 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Rogue
 
 			SkillResultTargetBuff(caster, skill, BuffId.KnifeThrowing_Debuff, skill.Level, 0f, DebuffDuration, 1, 100, -1, hits);
 
-			caster.StartBuff(BuffId.Cloaking_Buff, TimeSpan.FromSeconds(3));
+			caster.StartBuff(BuffId.Cloaking_Buff, 0, 0, TimeSpan.FromSeconds(3), caster, SkillId.Scout_Cloaking);
 		}
 	}
 }

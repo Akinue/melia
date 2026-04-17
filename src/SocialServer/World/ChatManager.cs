@@ -35,8 +35,21 @@ namespace Melia.Social.World
 		/// <param name="id"></param>
 		public void RemoveChatRoom(long id)
 		{
+			long dbId = 0;
+
 			lock (_rooms)
-				_rooms.Remove(id);
+			{
+				if (_rooms.TryGetValue(id, out var room))
+				{
+					if (room.Type == ChatRoomType.Group)
+						dbId = room.DbId;
+
+					_rooms.Remove(id);
+				}
+			}
+
+			if (dbId > 0)
+				SocialServer.Instance.Database.DeleteChatRoom(dbId);
 		}
 
 		/// <summary>
@@ -97,12 +110,49 @@ namespace Melia.Social.World
 			var room = new ChatRoom(chatId, "", type);
 			this.AddChatRoom(room);
 
-			room.AddMember(creator);
+			if (type == ChatRoomType.Group)
+				room.DbId = SocialServer.Instance.Database.InsertChatRoom(type, creator.Id, "New Chat");
+
+			this.AddMemberToRoom(room, creator);
 
 			if (chatId == 0)
 				room.AddMessage(new ChatMessage(creator, "!@#$NewRoomHasBeenCreated#@!"));
 
 			return room;
+		}
+
+		/// <summary>
+		/// Adds a member to a chat room, persisting the change to the
+		/// database if the room is a persisted group room.
+		/// </summary>
+		/// <param name="room"></param>
+		/// <param name="user"></param>
+		public void AddMemberToRoom(ChatRoom room, SocialUser user)
+		{
+			room.AddMember(user);
+
+			if (room.Type == ChatRoomType.Group && room.DbId > 0)
+				SocialServer.Instance.Database.InsertChatMember(room.DbId, user.Id, user.TeamName);
+		}
+
+		/// <summary>
+		/// Removes a member from a chat room, persisting the change to the
+		/// database if the room is a persisted group room. Removes the room
+		/// entirely if it becomes empty.
+		/// </summary>
+		/// <param name="room"></param>
+		/// <param name="accountId"></param>
+		public void RemoveMemberFromRoom(ChatRoom room, long accountId)
+		{
+			room.RemoveMember(accountId);
+
+			if (room.Type == ChatRoomType.Group && room.DbId > 0)
+			{
+				SocialServer.Instance.Database.DeleteChatMember(room.DbId, accountId);
+
+				if (room.MemberCount == 0)
+					this.RemoveChatRoom(room.Id);
+			}
 		}
 
 		/// <summary>
@@ -127,7 +177,15 @@ namespace Melia.Social.World
 
 			this.AddChatRoom(room);
 
-			// TODO: Restore chat rooms from database?
+			var chatRooms = SocialServer.Instance.Database.LoadChatRooms();
+
+			foreach (var (dbRoom, members) in chatRooms)
+			{
+				this.AddChatRoom(dbRoom);
+
+				foreach (var member in members)
+					dbRoom.AddMember(member);
+			}
 		}
 	}
 }

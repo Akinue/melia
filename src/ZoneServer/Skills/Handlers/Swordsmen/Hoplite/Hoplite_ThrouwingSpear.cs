@@ -6,6 +6,8 @@ using Melia.Shared.Game.Const;
 using Melia.Shared.L10N;
 using Melia.Shared.World;
 using Melia.Zone.Network;
+using Melia.Zone.Pads;
+using Melia.Zone.Pads.Handlers;
 using Melia.Zone.Skills.Combat;
 using Melia.Zone.Skills.Handlers.Base;
 using Melia.Zone.Skills.SplashAreas;
@@ -23,7 +25,7 @@ namespace Melia.Zone.Skills.Handlers.Swordsmen.Hoplite
 	/// Handler for the Hoplite skill Throwing Spear
 	/// </summary>
 	[SkillHandler(SkillId.Hoplite_ThrouwingSpear)]
-	public class Hoplite_ThrouwingSpear : IMeleeGroundSkillHandler, IDynamicCasted
+	public class Hoplite_ThrouwingSpear : IGroundSkillHandler, IDynamicCasted
 	{
 		private static readonly TimeSpan HitDelay = TimeSpan.FromMilliseconds(435);
 		private readonly static TimeSpan DebuffDuration = TimeSpan.FromSeconds(5);
@@ -53,9 +55,8 @@ namespace Melia.Zone.Skills.Handlers.Swordsmen.Hoplite
 		/// <param name="caster"></param>
 		/// <param name="originPos"></param>
 		/// <param name="farPos"></param>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
-			var target = targets.FirstOrDefault();
 			if (!caster.TrySpendSp(skill))
 			{
 				caster.ServerMessage(Localization.Get("Not enough SP."));
@@ -132,21 +133,29 @@ namespace Melia.Zone.Skills.Handlers.Swordsmen.Hoplite
 
 			await skill.Wait(HitDelay);
 
-			var pad = new Pad(PadName.ThrouwingSpear_Hoplite33_Pad, caster, skill, new Circle(farPos, 50));
-			pad.Position = farPos;
-			pad.Trigger.MaxActorCount = 8;
-			pad.Trigger.LifeTime = TimeSpan.FromSeconds(2);
-			pad.Trigger.Subscribe(TriggerType.Destroy, this.SpearExplosion);
+			var pad = Pad.Create(PadName.ThrouwingSpear_Hoplite33_Pad, caster, skill, farPos, new Circle(farPos, 50), new PadOptions
+			{
+				LifeTime = TimeSpan.FromSeconds(2),
+				MaxActorCount = 8,
+			});
 
 			caster.Map.AddPad(pad);
 		}
+	}
 
+	/// <summary>
+	/// Handler for the ThrouwingSpear_Hoplite33_Pad, which displays an
+	/// explosion effect.
+	/// </summary>
+	[PadHandler(PadName.ThrouwingSpear_Hoplite33_Pad)]
+	public class ThrouwingSpear_Hoplite33_Pad : IUpdatePadHandler
+	{
 		/// <summary>
-		/// Called by the spear explosion effect.
+		/// Applies spear explosion effect.
 		/// </summary>
 		/// <param name="sender"></param>
 		/// <param name="args"></param>
-		private void SpearExplosion(object sender, PadTriggerArgs args)
+		public void Updated(object sender, PadTriggerArgs args)
 		{
 			var pad = args.Trigger;
 			var caster = args.Creator;

@@ -315,7 +315,8 @@ namespace Melia.Zone.Scripting
 		}
 
 		/// <summary>
-		/// Adds new NPC to the world.
+		/// Adds new NPC to the world. May return null if the map isn't
+		/// served by the server.
 		/// </summary>
 		/// <param name="monsterId"></param>
 		/// <param name="name"></param>
@@ -469,6 +470,9 @@ namespace Melia.Zone.Scripting
 				var character = dialog.Player;
 				var npc = dialog.Npc;
 
+				if (!character.Position.InRange3D(npc.Position, 30))
+					return;
+
 				if (npc.Vars.ActivateOnce($"Npc.{uniqueName}"))
 				{
 					await OpenChest(character, npc, true);
@@ -519,6 +523,9 @@ namespace Melia.Zone.Scripting
 			{
 				var character = dialog.Player;
 				var npc = dialog.Npc;
+
+				if (!character.Position.InRange3D(npc.Position, 30))
+					return;
 
 				if (npc.Vars.ActivateOnce($"Npc.{uniqueName}"))
 				{

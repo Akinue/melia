@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -21,9 +21,9 @@ namespace Melia.Zone.Skills.Handlers.Clerics.Sadhu
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Sadhu_OutofBody)]
-	public class Sadhu_OutofBodyOverride : IMeleeGroundSkillHandler
+	public class Sadhu_OutofBodyOverride : IGroundSkillHandler
 	{
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (caster is not Character casterCharacter)
 				return;
@@ -53,6 +53,9 @@ namespace Melia.Zone.Skills.Handlers.Clerics.Sadhu
 			casterCharacter.SetAttackState(true);
 
 			farPos = casterCharacter.Position.GetRelative(casterCharacter.Direction, 30);
+
+			if (!casterCharacter.Map.Ground.IsValidPosition(farPos))
+				farPos = casterCharacter.Position;
 
 			Send.ZC_SKILL_READY(casterCharacter, skill, casterCharacter.Position, farPos);
 			Send.ZC_NORMAL.UpdateSkillEffect(casterCharacter, casterCharacter.Handle, casterCharacter.Position, casterCharacter.Direction, farPos);

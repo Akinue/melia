@@ -180,7 +180,15 @@ namespace Melia.Zone.Items.Effects
 				if (buffs == null)
 					return false;
 
-				var matchingBuffs = buffs.GetAll(b => b.Id.ToString().Contains(buffKeyword, StringComparison.OrdinalIgnoreCase));
+				var matchingBuffs = buffs.GetAll(b =>
+				{
+					foreach (var tag in b.Data.Tags)
+					{
+						if (string.Equals(tag, buffKeyword, StringComparison.OrdinalIgnoreCase))
+							return true;
+					}
+					return false;
+				});
 				return matchingBuffs.Count > 0;
 			};
 		}
@@ -246,6 +254,34 @@ namespace Melia.Zone.Items.Effects
 						modifier.DamageMultiplier += damageMultiplier;
 					}
 				});
+		}
+
+		/// <summary>
+		/// Sums the star levels of all equipped cards that share the same
+		/// className as the given item. Returns the total and whether this
+		/// item is the designated trigger (lowest ObjectId among duplicates).
+		/// Only the trigger card should fire the effect to avoid duplicates.
+		/// </summary>
+		public static (float totalStarLevel, bool isTrigger) GetCombinedCardStarLevel(Character character, Item item)
+		{
+			var allCards = character.Inventory.GetCards();
+			var className = item.Data.ClassName;
+			long lowestObjectId = long.MaxValue;
+			float total = 0;
+
+			foreach (var cardKvp in allCards)
+			{
+				var card = cardKvp.Value;
+				if (card == null || card.Data.ClassName != className)
+					continue;
+
+				total += Math.Max(card.CardLevel, 1);
+
+				if (card.ObjectId < lowestObjectId)
+					lowestObjectId = card.ObjectId;
+			}
+
+			return (total, item.ObjectId == lowestObjectId);
 		}
 
 		/// <summary>

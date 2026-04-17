@@ -72,14 +72,18 @@ namespace Melia.Zone.Scripting
 		private readonly ConcurrentDictionary<long, InstanceDungeon> _instancesByCharacter = new();
 
 		/// <summary>
-		/// Thread-safe dictionary mapping characters to their warp cancellation tokens.
+		/// Thread-safe dictionary mapping character DbIds to their warp cancellation tokens.
+		/// Uses DbId instead of Character reference to prevent memory leaks when
+		/// characters reconnect and get a new object instance.
 		/// </summary>
-		private readonly ConcurrentDictionary<Character, CancellationTokenSource> _warpCancellationTokens = new();
+		private readonly ConcurrentDictionary<long, CancellationTokenSource> _warpCancellationTokens = new();
 
 		/// <summary>
-		/// Thread-safe dictionary mapping characters to their activity monitoring cancellation tokens.
+		/// Thread-safe dictionary mapping character DbIds to their activity monitoring cancellation tokens.
+		/// Uses DbId instead of Character reference to prevent memory leaks when
+		/// characters reconnect and get a new object instance.
 		/// </summary>
-		private readonly ConcurrentDictionary<Character, CancellationTokenSource> _activityCheckTokens = new();
+		private readonly ConcurrentDictionary<long, CancellationTokenSource> _activityCheckTokens = new();
 
 		/// <summary>
 		/// Thread-safe dictionary mapping instances to their timeout cancellation tokens.
@@ -372,7 +376,7 @@ namespace Melia.Zone.Scripting
 				existingScript.Dispose();
 			}
 
-			ZoneServer.Instance.ServerEvents.PlayerEnteredMap.Subscribe(this.OnMapEntryInternal);
+			ZoneServer.Instance.ServerEvents.PlayerLoadComplete.Subscribe(this.OnMapEntryInternal);
 			ZoneServer.Instance.ServerEvents.PlayerLeftMap.Subscribe(this.OnMapLeaveInternal);
 			ZoneServer.Instance.ServerEvents.PlayerLeftParty.Subscribe(this.OnPlayerLeftParty);
 
@@ -436,6 +440,9 @@ namespace Melia.Zone.Scripting
 		/// <param name="character">The character entering the dungeon.</param>
 		protected async Task SetupPlayer(Character character)
 		{
+			if (character?.Map == null)
+				return;
+
 			if (!ZoneServer.Instance.Data.InstanceDungeonDb.TryGetByMapClassName(character.Map.ClassName, out var dungeonData))
 			{
 				return;
@@ -476,12 +483,23 @@ namespace Melia.Zone.Scripting
 				return;
 			}
 
+			// If the character is on the dungeon map but has no instance mapping
+			// and no dungeon ID, they're reconnecting after completion — warp out
+			var dungeonIdVar = character.Variables.Perm.GetInt(AutoMatchZoneManager.DungeonIdVarName);
+			if (dungeonIdVar == 0 && character.Map.ClassName == this.MapName)
+			{
+				Log.Info("DungeonScript: Character '{0}' reconnected on dungeon map with no active instance. Warping out.", character.Name);
+				while (character.IsWarping && character.Map != null) await Task.Delay(50);
+				character.Warp(character.GetCityReturnLocation());
+				return;
+			}
+
 			// Get party - players must be in a party to enter dungeons
 			var party = character.Connection?.Party;
 			if (party == null)
 			{
 				Log.Info("DungeonScript: Character '{0}' entered dungeon map without a party. Warping out.", character.Name);
-				while (character.IsWarping) await Task.Delay(50);
+				while (character.IsWarping && character.Map != null) await Task.Delay(50);
 				character.Warp(character.GetCityReturnLocation());
 				return;
 			}
@@ -490,7 +508,7 @@ namespace Melia.Zone.Scripting
 			if (leaderCharacter == null)
 			{
 				Log.Info("DungeonScript: Party has no leader for character '{0}'. Warping out.", character.Name);
-				while (character.IsWarping) await Task.Delay(50);
+				while (character.IsWarping && character.Map != null) await Task.Delay(50);
 				character.Warp(character.GetCityReturnLocation());
 				return;
 			}
@@ -527,14 +545,14 @@ namespace Melia.Zone.Scripting
 					else
 					{
 						Log.Warning("DungeonScript: Non-leader '{0}' instance was created but character not mapped. Warping out.", character.Name);
-						while (character.IsWarping) await Task.Delay(50);
+						while (character.IsWarping && character.Map != null) await Task.Delay(50);
 						character.Warp(character.GetCityReturnLocation());
 					}
 				}
 				catch (TaskCanceledException)
 				{
 					Log.Warning("DungeonScript: Non-leader '{0}' timed out waiting for instance creation ({1}ms). Warping out.", character.Name, InstanceCreationWaitTimeoutMs);
-					while (character.IsWarping) await Task.Delay(50);
+					while (character.IsWarping && character.Map != null) await Task.Delay(50);
 					character.Warp(character.GetCityReturnLocation());
 				}
 				finally
@@ -587,7 +605,7 @@ namespace Melia.Zone.Scripting
 			foreach (var memberCharacter in partyMembers)
 			{
 				if (memberCharacter == null) continue;
-				while (memberCharacter.IsWarping && (DateTime.UtcNow - warpWaitStart) < MaxWarpWaitTime)
+				while (memberCharacter.IsWarping && memberCharacter.Map != null && (DateTime.UtcNow - warpWaitStart) < MaxWarpWaitTime)
 					await Task.Delay(50);
 			}
 
@@ -601,11 +619,20 @@ namespace Melia.Zone.Scripting
 		{
 			// First check direct mapping
 			if (_instancesByCharacter.TryGetValue(characterDbId, out var instance))
-				return instance;
+			{
+				if (instance.State != InstanceState.Destroyed)
+					return instance;
+
+				// Stale mapping to destroyed instance — clean it up
+				_instancesByCharacter.TryRemove(characterDbId, out _);
+			}
 
 			// Check all instances to see if character was an original member
 			foreach (var inst in _instancesByOwner.Values)
 			{
+				if (inst.State == InstanceState.Destroyed)
+					continue;
+
 				if (inst.Characters.Any(c => c?.DbId == characterDbId))
 					return inst;
 			}
@@ -619,7 +646,18 @@ namespace Melia.Zone.Scripting
 		/// </summary>
 		private async Task JoinInstance(Character character, InstanceDungeon instance)
 		{
-			while (character.IsWarping) await Task.Delay(50);
+			while (character.IsWarping && character.Map != null) await Task.Delay(50);
+
+			// Don't join destroyed instances
+			if (instance.State == InstanceState.Destroyed)
+			{
+				_instancesByCharacter.TryRemove(character.DbId, out _);
+				character.Variables.Perm.SetString(ActiveInstanceVarName, null);
+				character.Variables.Perm.SetInt(AutoMatchZoneManager.DungeonIdVarName, 0);
+				character.Variables.Perm.SetLong(AutoMatchZoneManager.SessionIdVarName, 0);
+				character.Warp(character.GetCityReturnLocation());
+				return;
+			}
 
 			// If dungeon hasn't started yet (pre-created instance), start it
 			if (!instance.IsStarted)
@@ -643,11 +681,12 @@ namespace Melia.Zone.Scripting
 			// left their previous map (before entering the dungeon map).
 			this.CancelInstanceTimeout(instance);
 
-			// Add character to instance's character list if not already present
-			if (!instance.Characters.Contains(character))
-			{
+			// Replace stale character reference or add if not present
+			var staleIdx = instance.Characters.FindIndex(c => c?.DbId == character.DbId);
+			if (staleIdx >= 0)
+				instance.Characters[staleIdx] = character;
+			else
 				instance.Characters.Add(character);
-			}
 
 			// Wait for all registered party members to finish warping
 			var partyMembers = _instancesByCharacter
@@ -690,6 +729,18 @@ namespace Melia.Zone.Scripting
 		/// </summary>
 		private async Task RejoinInstance(Character character, InstanceDungeon instance)
 		{
+			// Don't rejoin a destroyed instance
+			if (instance.State == InstanceState.Destroyed)
+			{
+				_instancesByCharacter.TryRemove(character.DbId, out _);
+				character.Variables.Perm.SetString(ActiveInstanceVarName, null);
+				character.Variables.Perm.SetInt(AutoMatchZoneManager.DungeonIdVarName, 0);
+				character.Variables.Perm.SetLong(AutoMatchZoneManager.SessionIdVarName, 0);
+				Log.Info("DungeonScript: Character '{0}' tried to rejoin destroyed instance '{1}'. Warping out.", character.Name, instance.Id);
+				character.Warp(character.GetCityReturnLocation());
+				return;
+			}
+
 			// Check if rejoining is allowed by config
 			if (!ZoneServer.Instance.Conf.World.InstancedDungeonAllowRejoin)
 			{
@@ -707,13 +758,15 @@ namespace Melia.Zone.Scripting
 			this.CancelInstanceTimeout(instance);
 
 			// Restore character mapping if it was cleared
-			_instancesByCharacter.TryAdd(character.DbId, instance);
+			_instancesByCharacter[character.DbId] = instance;
 
-			// Add character back to instance's character list if not already present
-			if (!instance.Characters.Contains(character))
-			{
+			// Replace stale character reference (from before reconnect) with
+			// the current object, or add if not present at all
+			var staleIdx = instance.Characters.FindIndex(c => c?.DbId == character.DbId);
+			if (staleIdx >= 0)
+				instance.Characters[staleIdx] = character;
+			else
 				instance.Characters.Add(character);
-			}
 
 			// Restore permanent variable reference
 			character.Variables.Perm.SetString(ActiveInstanceVarName, this.Id);
@@ -746,14 +799,14 @@ namespace Melia.Zone.Scripting
 		private void StartActivityMonitoring(Character character, InstanceDungeon instance)
 		{
 			// Cancel and dispose any existing monitoring
-			if (_activityCheckTokens.TryRemove(character, out var existingCts))
+			if (_activityCheckTokens.TryRemove(character.DbId, out var existingCts))
 			{
 				existingCts.Cancel();
 				existingCts.Dispose();
 			}
 
 			var cts = new CancellationTokenSource();
-			_activityCheckTokens[character] = cts;
+			_activityCheckTokens[character.DbId] = cts;
 
 			CallSafe(this.MonitorDungeonActivity(character, instance, cts));
 		}
@@ -770,6 +823,10 @@ namespace Melia.Zone.Scripting
 				while (!token.IsCancellationRequested)
 				{
 					await Task.Delay(TimeSpan.FromSeconds(5), token);
+
+					// Check if character has been cleaned up
+					if (character.Map == null)
+						break;
 
 					// Check if character is still in the dungeon map
 					if (character.MapId != instance.MapId)
@@ -824,7 +881,7 @@ namespace Melia.Zone.Scripting
 			finally
 			{
 				// Always clean up and dispose the CTS
-				_activityCheckTokens.TryRemove(character, out _);
+				_activityCheckTokens.TryRemove(character.DbId, out _);
 				cts.Dispose();
 			}
 		}
@@ -965,12 +1022,10 @@ namespace Melia.Zone.Scripting
 			instance.Cleanup();
 
 			// Clear character mappings for all characters that were associated
-			foreach (var kvp in _instancesByCharacter)
+			var keysToRemove = _instancesByCharacter.Where(kvp => kvp.Value == instance).Select(kvp => kvp.Key).ToList();
+			foreach (var key in keysToRemove)
 			{
-				if (kvp.Value == instance)
-				{
-					_instancesByCharacter.TryRemove(kvp.Key, out _);
-				}
+				_instancesByCharacter.TryRemove(key, out _);
 			}
 
 			// Remove owner association only if this instance is still the one mapped
@@ -1031,17 +1086,25 @@ namespace Melia.Zone.Scripting
 		{
 			if (ZoneServer.Instance.World.TryGetMap(this.MapName, out var map))
 			{
-				var portal = new Npc(MonsterId.MissionGate, "Exit Portal", instance.Characters.FirstOrDefault().Position.GetRandomInRange2D(20, 30), instance.Characters.FirstOrDefault().Direction.Backwards)
+				var party = instance.Owner?.Connection?.Party;
+				var portalChar = party?.GetLeader();
+				if (portalChar == null || portalChar.Connection == null || portalChar.MapId != instance.MapId)
+					portalChar = instance.Characters.FirstOrDefault(c => c != null && c.Connection != null && c.MapId == instance.MapId);
+				var portalPos = portalChar?.Position.GetRandomInRange2D(20, 30) ?? instance.StartPosition;
+				var portalDir = portalChar?.Direction.Backwards ?? Direction.South;
+
+				var portal = new Npc(MonsterId.MissionGate, "Exit Portal", portalPos, portalDir)
 				{
 					Layer = instance.Layer
 				};
 				portal.AddEffect(new AttachEffect(AnimationName.Portal, 1, EffectLocation.Top));
 				map.AddMonster(portal);
+				instance.RegisterPersistentMonster(portal);
 
 				portal.SetClickTrigger("ExitPortalDialog", async (dialog) =>
 				{
 					dialog.Player.Warp(dialog.Player.GetCityReturnLocation());
-					this.DungeonEnded(instance, false);
+					instance.Cleanup();
 				});
 			}
 		}
@@ -1143,13 +1206,17 @@ namespace Melia.Zone.Scripting
 			instance.IsComplete = true;
 			instance.Vars.Set(CompletionTimeVarName, DateTime.UtcNow);
 
+			// Snapshot character list — reconnects can replace character objects
+			// mid-dungeon, so instance.Characters may contain stale references
+			var characters = instance.Characters.ToList();
+
 			this.OnDungeonComplete(instance);
 
 			// Check if entry count should be incremented on complete and hasn't been already
 			var incrementOnComplete = ZoneServer.Instance.Conf.World.InstancedDungeonIncrementEntryOnComplete;
 			var alreadyIncremented = instance.Vars.GetBool(InstanceDungeon.EntryCountIncrementedVarName);
 
-			foreach (var character in instance.Characters)
+			foreach (var character in characters)
 			{
 				if (character == null) continue;
 
@@ -1194,7 +1261,7 @@ namespace Melia.Zone.Scripting
 
 			if (autoMatchId == 0)
 			{
-				foreach (var character in instance.Characters)
+				foreach (var character in characters)
 				{
 					if (character == null) continue;
 					autoMatchId = character.Variables.Perm.GetLong(AutoMatchZoneManager.SessionIdVarName);
@@ -1206,24 +1273,28 @@ namespace Melia.Zone.Scripting
 				ZoneServer.Instance.World.AutoMatch.DestroyDungeonSession(autoMatchId);
 
 			// Start auto-warp timer for all characters
-			foreach (var character in instance.Characters)
+			foreach (var character in characters)
 			{
 				if (character == null) continue;
 
-				// Only process if the character is still associated with THIS instance
-				// This prevents stale dungeon completions from interfering with new instances
-				if (!_instancesByCharacter.TryGetValue(character.DbId, out var mappedInstance) || mappedInstance != instance)
-					continue;
+				// Cancel activity monitoring before clearing instance tracking,
+				// otherwise the monitor sees no mapping and warps the player
+				// out before the auto-warp delay expires.
+				if (_activityCheckTokens.TryRemove(character.DbId, out var activityCts))
+				{
+					activityCts.Cancel();
+					activityCts.Dispose();
+				}
 
 				// Cancel any existing warp token before creating a new one
-				if (_warpCancellationTokens.TryRemove(character, out var existingCts))
+				if (_warpCancellationTokens.TryRemove(character.DbId, out var existingCts))
 				{
 					existingCts.Cancel();
 					existingCts.Dispose();
 				}
 
 				var cts = new CancellationTokenSource();
-				_warpCancellationTokens[character] = cts;
+				_warpCancellationTokens[character.DbId] = cts;
 				CallSafe(this.AutoWarpCharacter(character, instance, cts.Token));
 
 				// Clear all instance tracking so player can start a new dungeon immediately
@@ -1231,6 +1302,13 @@ namespace Melia.Zone.Scripting
 				character.Variables.Perm.SetString(ActiveInstanceVarName, null);
 				character.Variables.Perm.SetInt(AutoMatchZoneManager.DungeonIdVarName, 0);
 				character.Variables.Perm.SetLong(AutoMatchZoneManager.SessionIdVarName, 0);
+
+				// If the character disconnected during the dungeon, their stale
+				// vars were already saved to DB by OnClosed. The clears above
+				// only update the orphaned in-memory object, so we need to
+				// explicitly persist them or they'll reload on reconnect.
+				if (!character.IsOnline)
+					ZoneServer.Instance.Database.SavePlayerData(character);
 			}
 
 			// Remove owner association only if this instance is still the one mapped
@@ -1286,25 +1364,25 @@ namespace Melia.Zone.Scripting
 
 				character.Warp(character.GetCityReturnLocation());
 
-				// After warping, check if dungeon is complete and all characters have left
-				// If so, end the dungeon properly instead of waiting for timeout
-				if (instance.IsComplete)
+				// Clean up instance resources (monsters, portals, stages) once
+				// all players have left. Cleanup is idempotent — the Destroyed
+				// state guard prevents double cleanup.
+				try
 				{
-					await Task.Delay(500, token); // Small delay to ensure warp is processed
+					await Task.Delay(500);
+				}
+				catch (TaskCanceledException) { }
 
-					var anyMemberInside = instance.Characters.Any(c => c != null && c.MapId == instance.MapId);
-					if (!anyMemberInside)
-					{
-						// Use DungeonEnded to properly clean up character variables and auto-match session
-						this.DungeonEnded(instance, false);
-					}
+				if (!instance.Characters.Any(c => c != null && c.MapId == instance.MapId))
+				{
+					instance.Cleanup();
 				}
 			}
 			catch (TaskCanceledException) { }
 			finally
 			{
 				// Clean up and dispose the token
-				if (_warpCancellationTokens.TryRemove(character, out var cts))
+				if (_warpCancellationTokens.TryRemove(character.DbId, out var cts))
 				{
 					cts.Dispose();
 				}
@@ -1323,14 +1401,14 @@ namespace Melia.Zone.Scripting
 			character.Variables.Perm.SetString(ActiveInstanceVarName, null);
 
 			// Stop and dispose activity monitoring token
-			if (_activityCheckTokens.TryRemove(character, out var cts))
+			if (_activityCheckTokens.TryRemove(character.DbId, out var cts))
 			{
 				cts.Cancel();
 				cts.Dispose();
 			}
 
 			// Stop and dispose warp token if active
-			if (_warpCancellationTokens.TryRemove(character, out var warpCts))
+			if (_warpCancellationTokens.TryRemove(character.DbId, out var warpCts))
 			{
 				warpCts.Cancel();
 				warpCts.Dispose();
@@ -1344,14 +1422,14 @@ namespace Melia.Zone.Scripting
 		protected virtual void OnMapLeave(Character character)
 		{
 			// Cancel and dispose auto-warp if active
-			if (_warpCancellationTokens.TryRemove(character, out var cts))
+			if (_warpCancellationTokens.TryRemove(character.DbId, out var cts))
 			{
 				cts.Cancel();
 				cts.Dispose();
 			}
 
 			// Cancel and dispose activity monitoring
-			if (_activityCheckTokens.TryRemove(character, out var activityCts))
+			if (_activityCheckTokens.TryRemove(character.DbId, out var activityCts))
 			{
 				activityCts.Cancel();
 				activityCts.Dispose();
@@ -1367,6 +1445,10 @@ namespace Melia.Zone.Scripting
 				var currentMapId = character.Map?.Id ?? 0;
 				if (currentMapId != instance.MapId)
 					return;
+
+				// Close the reward HUD so it doesn't persist in the destination map
+				if (character.Connection != null)
+					Send.ZC_NORMAL.IndunAddonMsgParam(character.Connection, 2, "FAIL", 1);
 
 				// Check if any member is still inside the dungeon
 				var anyMemberInside = instance.Characters.Any(member => member != null && member.Map?.Id == instance.MapId && member.DbId != character.DbId);
@@ -1390,6 +1472,9 @@ namespace Melia.Zone.Scripting
 			// Cancel any pending instance timeout
 			this.CancelInstanceTimeout(instance);
 
+			// Snapshot the character list before Cleanup clears it
+			var characters = instance.Characters.ToList();
+
 			// Stop all background stages
 			instance.Cleanup();
 
@@ -1401,8 +1486,7 @@ namespace Melia.Zone.Scripting
 			}
 			else
 			{
-				// If owner is null, try to find the session ID from any character
-				foreach (var character in instance.Characters)
+				foreach (var character in characters)
 				{
 					if (character == null) continue;
 					autoMatchId = character.Variables.Perm.GetLong(AutoMatchZoneManager.SessionIdVarName);
@@ -1419,7 +1503,7 @@ namespace Melia.Zone.Scripting
 			instance.CurrentStage?.Complete();
 
 			// Clean up all characters
-			foreach (var character in instance.Characters)
+			foreach (var character in characters)
 			{
 				if (character == null) continue;
 
@@ -1434,9 +1518,11 @@ namespace Melia.Zone.Scripting
 
 				this.OnDungeonExit(character);
 
-				// Null-safe connection access
-				if (sendFailMessage && character.Connection != null)
+				if (character.Connection != null)
+				{
+					// Always close the reward HUD to prevent it persisting in towns
 					Send.ZC_NORMAL.IndunAddonMsgParam(character.Connection, 2, "FAIL", 1);
+				}
 
 				character.StopLayer();
 				_instancesByCharacter.TryRemove(character.DbId, out _);
@@ -1446,16 +1532,7 @@ namespace Melia.Zone.Scripting
 				// only exist on the orphaned in-memory object and are lost
 				// because OnClosed already saved stale values on disconnect.
 				if (!character.IsOnline)
-				{
-					try
-					{
-						ZoneServer.Instance.Database.SaveCharacterData(character);
-					}
-					catch (Exception ex)
-					{
-						Log.Error("DungeonScript: Failed to save cleared dungeon vars for offline character '{0}': {1}", character.Name, ex);
-					}
-				}
+					ZoneServer.Instance.Database.SavePlayerData(character);
 			}
 
 			// Remove owner association if owner exists
@@ -1621,7 +1698,7 @@ namespace Melia.Zone.Scripting
 			_instanceCreationTasks.Clear();
 
 			// Unsubscribe from events
-			ZoneServer.Instance.ServerEvents.PlayerEnteredMap.Unsubscribe(this.OnMapEntryInternal);
+			ZoneServer.Instance.ServerEvents.PlayerLoadComplete.Unsubscribe(this.OnMapEntryInternal);
 			ZoneServer.Instance.ServerEvents.PlayerLeftMap.Unsubscribe(this.OnMapLeaveInternal);
 			ZoneServer.Instance.ServerEvents.PlayerLeftParty.Unsubscribe(this.OnPlayerLeftParty);
 

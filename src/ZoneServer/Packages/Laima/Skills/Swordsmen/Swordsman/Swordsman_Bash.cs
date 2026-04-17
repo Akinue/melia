@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Melia.Shared.Packages;
@@ -24,7 +24,7 @@ namespace Melia.Zone.Skills.HandlersOverrides.Swordsmen.Swordsman
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Swordman_Bash)]
-	public class Swordman_BashOverride : IMeleeGroundSkillHandler
+	public class Swordman_BashOverride : IGroundSkillHandler
 	{
 		/// <summary>
 		/// Handles skill, damaging targets.
@@ -33,7 +33,7 @@ namespace Melia.Zone.Skills.HandlersOverrides.Swordsmen.Swordsman
 		/// <param name="caster"></param>
 		/// <param name="originPos"></param>
 		/// <param name="farPos"></param>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -55,7 +55,9 @@ namespace Melia.Zone.Skills.HandlersOverrides.Swordsmen.Swordsman
 
 			var hitDelay = 280;
 			var aniTime = 80;
-			skill.Run(SkillAttack(caster, skill, splashArea, hitDelay, aniTime, hits, this.ApplyStun));
+			var modifier = new SkillModifier();
+			modifier.HitRateMultiplier += 0.25f + 0.05f * skill.Level;
+			skill.Run(SkillAttack(caster, skill, splashArea, hitDelay, aniTime, hits, this.ApplyStun, modifier));
 		}
 
 		/// <summary>

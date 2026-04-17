@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Melia.Shared.Packages;
@@ -22,7 +22,7 @@ namespace Melia.Zone.Skills.HandlersOverrides.Swordsmen.Hoplite
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Hoplite_SpearLunge)]
-	public class Hoplite_SpearLungeOverride : IMeleeGroundSkillHandler
+	public class Hoplite_SpearLungeOverride : IGroundSkillHandler
 	{
 		/// <summary>
 		/// Handles skill, damaging targets.
@@ -32,7 +32,7 @@ namespace Melia.Zone.Skills.HandlersOverrides.Swordsmen.Hoplite
 		/// <param name="originPos"></param>
 		/// <param name="farPos"></param>
 		/// <param name="targets"></param>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			// Check if caster is wielding a spear or two-handed spear
 			if (caster is Character character)
@@ -117,7 +117,7 @@ namespace Melia.Zone.Skills.HandlersOverrides.Swordsmen.Hoplite
 				hits.Add(skillHit);
 
 				// Apply debuff that increases pierce damage
-				target.StartBuff(BuffId.SpearLunge_Debuff, skill.Level, 0, TimeSpan.FromSeconds(5), caster);
+				target.StartBuff(BuffId.SpearLunge_Debuff, skill.Level, 0, TimeSpan.FromSeconds(10), caster);
 			}
 
 			Send.ZC_SKILL_HIT_INFO(caster, hits);

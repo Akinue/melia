@@ -85,6 +85,11 @@ namespace Melia.Zone.World.Actors.Monsters
 		public SizeType EffectiveSize => SizeType.M;
 
 		/// <summary>
+		/// Returns the NPC's agent radius (always 15 for NPCs).
+		/// </summary>
+		public float AgentRadius => 15;
+
+		/// <summary>
 		/// Returns the NPC's rank (always Normal for NPCs).
 		/// </summary>
 		public MonsterRank Rank => MonsterRank.Normal;
@@ -338,10 +343,7 @@ namespace Melia.Zone.World.Actors.Monsters
 		/// Returns true if this NPC can be staggered.
 		/// </summary>
 		/// <returns>Always returns false for NPCs.</returns>
-		public bool CanStagger()
-		{
-			return false;
-		}
+		public bool CanStagger() => false;
 
 		/// <summary>
 		/// Returns true if this NPC can be knocked down.

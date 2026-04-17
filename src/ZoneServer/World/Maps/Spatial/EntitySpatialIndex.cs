@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using Melia.Shared.World;
 using Melia.Zone.Skills.SplashAreas;
 using Melia.Zone.World.Actors;
@@ -18,7 +19,7 @@ namespace Melia.Zone.World.Maps.Spatial
 
 		private readonly Dictionary<long, List<ICombatEntity>> _cells = new();
 		private readonly Dictionary<int, long> _entityCells = new();
-		private readonly object _lock = new();
+		private readonly ReaderWriterLockSlim _rwLock = new(LockRecursionPolicy.NoRecursion);
 
 		private readonly float _minX, _minZ;
 		private readonly int _gridWidth, _gridHeight;
@@ -55,7 +56,8 @@ namespace Melia.Zone.World.Maps.Spatial
 
 			var key = this.GetCellKey(entity.Position.X, entity.Position.Z);
 
-			lock (_lock)
+			_rwLock.EnterWriteLock();
+			try
 			{
 				if (!_cells.TryGetValue(key, out var cell))
 				{
@@ -64,6 +66,10 @@ namespace Melia.Zone.World.Maps.Spatial
 				}
 				cell.Add(entity);
 				_entityCells[entity.Handle] = key;
+			}
+			finally
+			{
+				_rwLock.ExitWriteLock();
 			}
 		}
 
@@ -75,7 +81,8 @@ namespace Melia.Zone.World.Maps.Spatial
 			if (entity == null)
 				return;
 
-			lock (_lock)
+			_rwLock.EnterWriteLock();
+			try
 			{
 				if (_entityCells.TryGetValue(entity.Handle, out var key))
 				{
@@ -89,6 +96,10 @@ namespace Melia.Zone.World.Maps.Spatial
 					_entityCells.Remove(entity.Handle);
 				}
 			}
+			finally
+			{
+				_rwLock.ExitWriteLock();
+			}
 		}
 
 		/// <summary>
@@ -96,7 +107,8 @@ namespace Melia.Zone.World.Maps.Spatial
 		/// </summary>
 		public void Remove(int handle, Position position)
 		{
-			lock (_lock)
+			_rwLock.EnterWriteLock();
+			try
 			{
 				if (_entityCells.TryGetValue(handle, out var key))
 				{
@@ -110,6 +122,10 @@ namespace Melia.Zone.World.Maps.Spatial
 					_entityCells.Remove(handle);
 				}
 			}
+			finally
+			{
+				_rwLock.ExitWriteLock();
+			}
 		}
 
 		/// <summary>
@@ -122,7 +138,8 @@ namespace Melia.Zone.World.Maps.Spatial
 
 			var newKey = this.GetCellKey(newPos.X, newPos.Z);
 
-			lock (_lock)
+			_rwLock.EnterWriteLock();
+			try
 			{
 				if (!_entityCells.TryGetValue(entity.Handle, out var currentKey))
 					return;
@@ -146,6 +163,10 @@ namespace Melia.Zone.World.Maps.Spatial
 				newCell.Add(entity);
 				_entityCells[entity.Handle] = newKey;
 			}
+			finally
+			{
+				_rwLock.ExitWriteLock();
+			}
 		}
 
 		/// <summary>
@@ -154,6 +175,15 @@ namespace Melia.Zone.World.Maps.Spatial
 		public List<ICombatEntity> QueryCircle(Position center, float radius)
 		{
 			var results = new List<ICombatEntity>();
+			this.QueryCircle(center, radius, results);
+			return results;
+		}
+
+		/// <summary>
+		/// Queries all entities within a circular area into the given buffer.
+		/// </summary>
+		public void QueryCircle(Position center, float radius, List<ICombatEntity> results)
+		{
 			var radiusSq = radius * radius;
 
 			var minCellX = (int)((center.X - radius - _minX) / CellSize);
@@ -166,7 +196,8 @@ namespace Melia.Zone.World.Maps.Spatial
 			minCellY = Math.Max(0, minCellY);
 			maxCellY = Math.Min(_gridHeight - 1, maxCellY);
 
-			lock (_lock)
+			_rwLock.EnterReadLock();
+			try
 			{
 				for (var cx = minCellX; cx <= maxCellX; cx++)
 				{
@@ -186,8 +217,10 @@ namespace Melia.Zone.World.Maps.Spatial
 					}
 				}
 			}
-
-			return results;
+			finally
+			{
+				_rwLock.ExitReadLock();
+			}
 		}
 
 		/// <summary>
@@ -195,11 +228,23 @@ namespace Melia.Zone.World.Maps.Spatial
 		/// </summary>
 		public List<ICombatEntity> QueryShape(IShapeF shape)
 		{
+			var results = new List<ICombatEntity>();
+			this.QueryShape(shape, results);
+			return results;
+		}
+
+		/// <summary>
+		/// Queries all entities within an arbitrary shape into the given buffer.
+		/// </summary>
+		public void QueryShape(IShapeF shape, List<ICombatEntity> results)
+		{
 			// Fast path for circles - avoid expensive GetEdgePoints
 			if (shape is CircleF circle)
-				return this.QueryCircle(new Position(circle.Center.X, 0, circle.Center.Y), circle.Radius + MaxAgentRadius);
+			{
+				this.QueryCircle(new Position(circle.Center.X, 0, circle.Center.Y), circle.Radius + MaxAgentRadius, results);
+				return;
+			}
 
-			var results = new List<ICombatEntity>();
 			var center = shape.Center;
 
 			// Estimate radius from shape bounds, expanded by max agent
@@ -226,7 +271,8 @@ namespace Melia.Zone.World.Maps.Spatial
 			minCellY = Math.Max(0, minCellY);
 			maxCellY = Math.Min(_gridHeight - 1, maxCellY);
 
-			lock (_lock)
+			_rwLock.EnterReadLock();
+			try
 			{
 				for (var cx = minCellX; cx <= maxCellX; cx++)
 				{
@@ -244,8 +290,10 @@ namespace Melia.Zone.World.Maps.Spatial
 					}
 				}
 			}
-
-			return results;
+			finally
+			{
+				_rwLock.ExitReadLock();
+			}
 		}
 
 		/// <summary>
@@ -262,10 +310,15 @@ namespace Melia.Zone.World.Maps.Spatial
 		{
 			var results = new List<ICombatEntity>();
 
-			lock (_lock)
+			_rwLock.EnterReadLock();
+			try
 			{
 				foreach (var cell in _cells.Values)
 					results.AddRange(cell);
+			}
+			finally
+			{
+				_rwLock.ExitReadLock();
 			}
 
 			return results;
@@ -276,6 +329,7 @@ namespace Melia.Zone.World.Maps.Spatial
 		/// </summary>
 		public void Dispose()
 		{
+			_rwLock.Dispose();
 		}
 	}
 }

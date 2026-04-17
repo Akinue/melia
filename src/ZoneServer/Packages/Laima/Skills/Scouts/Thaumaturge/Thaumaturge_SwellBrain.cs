@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using Melia.Shared.Packages;
 using Melia.Shared.Game.Const;
@@ -15,12 +15,12 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Thaumaturge
 {
 	[Package("laima")]
 	[SkillHandler(SkillId.Thaumaturge_SwellBrain)]
-	public class Thaumaturge_SwellBrainOverride : IMeleeGroundSkillHandler
+	public class Thaumaturge_SwellBrainOverride : IGroundSkillHandler
 	{
 		private const float BuffRange = 300;
 		private const int BuffDurationSeconds = 300;
 
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -30,14 +30,14 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Thaumaturge
 			skill.IncreaseOverheat();
 			caster.SetAttackState(true);
 
-			var targetHandle = targets?.FirstOrDefault()?.Handle ?? 0;
+			var targetHandle = target?.Handle ?? 0;
 			Send.ZC_SKILL_READY(caster, skill, 1, originPos, farPos);
 			Send.ZC_NORMAL.UpdateSkillEffect(caster, targetHandle, originPos, originPos.GetDirection(farPos), Position.Zero);
 			Send.ZC_SKILL_MELEE_GROUND(caster, skill, farPos, ForceId.GetNew(), null);
 
 			var duration = TimeSpan.FromSeconds(BuffDurationSeconds);
 
-			caster.StartBuff(BuffId.BigHeadMode, skill.Level, 0, duration, caster);
+			caster.StartBuff(BuffId.BigHeadMode, skill.Level, 0, duration, caster, skill.Id);
 
 			if (caster is Character character)
 			{
@@ -49,7 +49,7 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Thaumaturge
 					{
 						if (member == caster)
 							continue;
-						member.StartBuff(BuffId.BigHeadMode, skill.Level, 0, duration, caster);
+						member.StartBuff(BuffId.BigHeadMode, skill.Level, 0, duration, caster, skill.Id);
 					}
 				}
 			}

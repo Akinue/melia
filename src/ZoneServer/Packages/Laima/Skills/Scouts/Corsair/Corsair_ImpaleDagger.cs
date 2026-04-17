@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -25,12 +25,11 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Corsair
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Corsair_ImpaleDagger)]
-	public class Corsair_ImpaleDaggerOverride : IMeleeGroundSkillHandler
+	public class Corsair_ImpaleDaggerOverride : IGroundSkillHandler
 	{
 		private const float MaxDashDistance = 50f;
-		private const int HitCount = 4;
 
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -41,7 +40,7 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Corsair
 			skill.IncreaseOverheat();
 			caster.SetAttackState(true);
 
-			var targetHandle = targets.FirstOrDefault()?.Handle ?? 0;
+			var targetHandle = target?.Handle ?? 0;
 
 			Send.ZC_SKILL_READY(caster, skill, 1, originPos, farPos);
 			Send.ZC_NORMAL.UpdateSkillEffect(caster, targetHandle, originPos, originPos.GetDirection(farPos), Position.Zero);
@@ -77,6 +76,8 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Corsair
 				SkillTargetMove(skill, caster, moveTargets, 0f, dashDistance, 0f, 0f, 0f, 0f, 0.2f, 0.2f, 0);
 			}
 
+			await skill.Wait(TimeSpan.FromMilliseconds(60));
+
 			// Get targets after movement for damage
 			var newFarPos = caster.Position.GetRelative(caster.Direction, 50f);
 			splashParam = skill.GetSplashParameters(caster, caster.Position, newFarPos, length: 50f, width: 30f);
@@ -86,7 +87,8 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Corsair
 				.LimitBySDR(caster, skill)
 				.ToList();
 
-			for (var i = 0; i < HitCount; i++)
+			var hitCount = 8;
+			for (var i = 0; i < hitCount; i++)
 			{
 				foreach (var target in aoeTargets)
 				{
@@ -107,8 +109,8 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Corsair
 					Send.ZC_HIT_INFO(caster, target, skillHit.HitInfo);
 				}
 
-				if (i < HitCount - 1)
-					await skill.Wait(TimeSpan.FromMilliseconds(130));
+				if (i < hitCount - 1)
+					await skill.Wait(TimeSpan.FromMilliseconds(60));
 			}
 		}
 

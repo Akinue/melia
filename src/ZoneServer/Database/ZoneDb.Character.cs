@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using Melia.Shared.Database;
 using Melia.Shared.Game.Const;
+using Yggdrasil.Db.MySql.SimpleCommands;
 using Melia.Shared.Game.Properties;
 using Melia.Shared.ObjectProperties;
 using Melia.Shared.World;
@@ -34,53 +35,35 @@ namespace Melia.Zone.Database
 		/// </summary>
 		private void LoadCharacterComponentData(Character character, string charNameForLog)
 		{
-			using (Debug.Profile($"Load.InventoryItems: {charNameForLog}", 200))
-				this.LoadCharacterItems(character);
+			this.LoadCharacterItems(character);
 
-			using (Debug.Profile($"Load.MiscData: {charNameForLog}", 100))
-			{
-				this.LoadVars(character.Variables.Perm, "vars_characters", "characterId", character.DbId);
-				this.LoadSessionObjects(character);
-				this.LoadJobs(character);
-				this.LoadSkills(character);
-				this.LoadAbilities(character);
-				this.LoadBuffs(character);
-				this.LoadCooldowns(character);
-			}
+			this.LoadVars(character.Variables.Perm, "vars_characters", "characterId", character.DbId);
+			this.LoadSessionObjects(character);
+			this.LoadJobs(character);
+			this.LoadSkills(character);
+			this.LoadAbilities(character);
+			this.LoadBuffs(character);
+			this.LoadCooldowns(character);
 
-			using (Debug.Profile($"Load.Quests: {charNameForLog}", 100))
-				this.LoadQuests(character);
+			this.LoadQuests(character);
 
-			using (Debug.Profile($"Load.Properties: {charNameForLog}", 100))
-			{
-				this.LoadProperties("character_properties", "characterId", character.DbId, character.Properties);
-				this.LoadProperties("character_etc_properties", "characterId", character.DbId, character.Etc.Properties);
-				CardPropertyModifier.Instance.RestoreAllModifiers(character);
-			}
+			this.LoadProperties("character_properties", "characterId", character.DbId, character.Properties);
+			this.LoadProperties("character_etc_properties", "characterId", character.DbId, character.Etc.Properties);
+			CardPropertyModifier.Instance.RestoreAllModifiers(character);
 
-			using (Debug.Profile($"Load.GroupsAndSocial: {charNameForLog}", 100))
-			{
-				this.LoadCompanions(character);
-				this.LoadParty(character);
-				// this.LoadGuild(character); // Removed: Guild type deleted
-				this.LoadHelp(character);
-			}
+			this.LoadCompanions(character);
+			this.LoadParty(character);
+			this.LoadHelp(character);
 
-			using (Debug.Profile($"Load.AchievementsAndBooks: {charNameForLog}", 100))
-			{
-				this.LoadAchievements(character);
-				this.LoadAchievementPoints(character);
-				this.LoadAdventureBook(character);
-				this.LoadAdventureBookMonsterDrop(character);
-				this.LoadAdventureBookItems(character);
-				this.LoadCollections(character);
-			}
+			this.LoadAchievements(character);
+			this.LoadAchievementPoints(character);
+			this.LoadAdventureBook(character);
+			this.LoadAdventureBookMonsterDrop(character);
+			this.LoadAdventureBookItems(character);
+			this.LoadCollections(character);
 
-			using (Debug.Profile($"Load.PersonalStorage: {charNameForLog}", 100))
-			{
-				character.PersonalStorage.InitSize();
-				this.LoadStorage(character.PersonalStorage, "storage_personal", "characterId", character.DbId);
-			}
+			character.PersonalStorage.InitSize();
+			this.LoadStorage(character.PersonalStorage, "storage_personal", "characterId", character.DbId);
 		}
 
 		private void LoadAchievements(Character character)
@@ -197,8 +180,12 @@ namespace Melia.Zone.Database
 
 		private void LoadJobs(Character character)
 		{
+			// Note that the order the jobs are added in is important,
+			// because it determines the jobs' ranks, which are assigned
+			// based on their order. That's why they are queried by their
+			// selection date, which effectively determines their rank.
 			using (var conn = this.GetConnection())
-			using (var mc = new MySqlCommand("SELECT * FROM `jobs` WHERE `characterId` = @characterId", conn))
+			using (var mc = new MySqlCommand("SELECT * FROM `jobs` WHERE `characterId` = @characterId ORDER BY `selectionDate` ASC", conn))
 			{
 				mc.Parameters.AddWithValue("@characterId", character.DbId);
 				using (var reader = mc.ExecuteReader())
@@ -552,7 +539,7 @@ namespace Melia.Zone.Database
 				return;
 
 			using (var conn = this.GetConnection())
-			using (var cmd = new InsertCommand("INSERT INTO `help` {0} ON DUPLICATE KEY UPDATE `shown` = VALUES(`shown`)", conn))
+			using (var cmd = new InsertCommand("INSERT INTO `help` {parameters} ON DUPLICATE KEY UPDATE `shown` = VALUES(`shown`)", conn))
 			{
 				cmd.Set("accountId", accountId);
 				cmd.Set("helpId", helpId);
@@ -570,7 +557,7 @@ namespace Melia.Zone.Database
 			using (var conn = this.GetConnection())
 			using (var trans = conn.BeginTransaction())
 			{
-				using (var cmd = new InsertCommand("INSERT INTO `companions` {0}", conn, trans))
+				using (var cmd = new InsertCommand("INSERT INTO `companions` {parameters}", conn, trans))
 				{
 					companion.AdoptTime = DateTime.Now;
 
@@ -770,7 +757,7 @@ namespace Melia.Zone.Database
 					}
 
 					// Re-insert parent
-					using (var cmd = new InsertCommand("INSERT INTO `houses` {0}", conn, trans))
+					using (var cmd = new InsertCommand("INSERT INTO `houses` {parameters}", conn, trans))
 					{
 						cmd.Set("houseId", house.Id);
 						cmd.Set("name", house.Name);
@@ -784,7 +771,7 @@ namespace Melia.Zone.Database
 					// Re-insert children
 					foreach (var prop in house.Props)
 					{
-						using (var cmd = new InsertCommand("INSERT INTO `house_props` {0}", conn, trans))
+						using (var cmd = new InsertCommand("INSERT INTO `house_props` {parameters}", conn, trans))
 						{
 							cmd.Set("houseId", house.Id);
 							cmd.Set("monsterId", prop.MonsterId);

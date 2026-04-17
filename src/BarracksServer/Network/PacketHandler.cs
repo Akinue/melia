@@ -511,7 +511,13 @@ namespace Melia.Barracks.Network
 			// Get zone server info
 			if (!BarracksServer.Instance.ServerList.TryGetZoneServer(character.MapId, channelId, out var zoneServerInfo))
 			{
-				Log.Error("CB_START_GAME: Zone server serving map '{0}' with index '{1}' not found.", character.MapId, channelId);
+				// The client will send this packet with index 0 even if
+				// no channels are available, so we're not going to log an
+				// error.
+
+				//Log.Error("CB_START_GAME: Zone server serving map '{0}' with index '{1}' not found.", character.MapId, channelId);
+				Send.BC_MESSAGE(conn, MsgType.Text, Localization.Get("This channel appears to be offline. Please choose another or try again later."));
+				Send.BC_NORMAL.StartGameFailed(conn);
 				return;
 			}
 
@@ -601,10 +607,11 @@ namespace Melia.Barracks.Network
 		}
 
 		/// <summary>
-		/// Sent upon login. Asserts that the client IPF files are correct.
+		/// Sent upon login. Asserts that IPF files checksum is correct,
+		/// indicating that the data has not been tempered with.
 		/// </summary>
 		/// <remarks>
-		/// This must be configured in the login configuration file to be enabled.
+		/// This must be enabled in the barracks configuration file.
 		/// </remarks>
 		[PacketHandler(Op.CB_CHECK_CLIENT_INTEGRITY)]
 		public void CB_CHECK_CLIENT_INTEGRITY(IBarracksConnection conn, Packet packet)
@@ -615,8 +622,9 @@ namespace Melia.Barracks.Network
 				return;
 
 			var serverChecksum = BarracksServer.Instance.Conf.Barracks.IpfChecksum;
+			var autoUpdateEnabled = BarracksServer.Instance.Conf.Barracks.IpfChecksumAutoUpdate;
 
-			if (conn.Account.Authority >= 99 && !clientChecksum.Equals(serverChecksum, StringComparison.InvariantCultureIgnoreCase))
+			if (autoUpdateEnabled && conn.Account.Authority >= 99 && !clientChecksum.Equals(serverChecksum, StringComparison.InvariantCultureIgnoreCase))
 			{
 				Log.Info("Updating IPF checksum to '{0}' based on user '{1}'s request.", clientChecksum, conn.Account.Name);
 
@@ -714,6 +722,39 @@ namespace Melia.Barracks.Network
 			{
 				Log.Warning("CB_PET_PC: Companion not found by id '{0}' received from '{1}'.", companionId, conn.Account.Name);
 				return;
+			}
+
+			// When assigning a companion to a character, check if another
+			// companion of the same type is already assigned and unset it.
+			// Companion type is determined by JobId from companion data
+			// (e.g. job 3014 = flying companions, job 0 = ground mounts).
+			if (character != null)
+			{
+				var companionDb = BarracksServer.Instance.Data.CompanionDb;
+				var newJobId = 0;
+
+				if (companionDb.TryFind(companion.MonsterId, out var newCompanionData))
+					newJobId = newCompanionData.JobId;
+
+				foreach (var other in conn.Account.GetCompanions())
+				{
+					if (other.ObjectId == companion.ObjectId)
+						continue;
+
+					if (other.CharacterDbId != character.DbId)
+						continue;
+
+					var otherJobId = 0;
+					if (companionDb.TryFind(other.MonsterId, out var otherCompanionData))
+						otherJobId = otherCompanionData.JobId;
+
+					if (otherJobId == newJobId)
+					{
+						other.CharacterDbId = 0;
+						BarracksServer.Instance.Database.SetCompanionCharacter(other.DbId, 0);
+						Send.BC_NORMAL.SetCompanion(conn, other.ObjectId, 0);
+					}
+				}
 			}
 
 			companion.CharacterDbId = character?.DbId ?? 0;
@@ -914,14 +955,36 @@ namespace Melia.Barracks.Network
 		}
 
 		/// <summary>
-		/// Sent upon login, to inform the server about the selected language.
+		/// Sent upon login, to inform the server about the selected
+		/// language.
 		/// </summary>
+		/// <remarks>
+		/// This packet is only sent if the selected language is part of
+		/// the internally supported languages, which are the ones defined
+		/// in the <see cref="Language"/> enum. Other languages can be
+		/// selected, since every language found in "languageData" is
+		/// displayed as an option, but they will not trigger this packet
+		/// or CZ_SELECTED_LANGUAGE. This includes Chinese, which doesn't
+		/// appear to send it either, and Korean, which is filtered out
+		/// as an option on the client-side.
+		/// 
+		/// To support languages that the client doesn't handle normally,
+		/// use the command >language.
+		/// </remarks>
 		/// <param name="conn"></param>
 		/// <param name="packet"></param>
 		[PacketHandler(Op.CB_SELECTED_LANGUAGE)]
 		public void CB_SELECTED_LANGUAGE(IBarracksConnection conn, Packet packet)
 		{
-			var language = packet.GetShort();
+			var language = (Language)packet.GetShort();
+
+			if (!Enum.IsDefined(typeof(Language), language))
+			{
+				Log.Warning("CB_SELECTED_LANGUAGE: Invalid language '{0}' received from '{1}'.", language, conn.Account.Name);
+				return;
+			}
+
+			conn.Account.Language = language.ToString();
 		}
 
 		/// <summary>
@@ -1035,6 +1098,20 @@ namespace Melia.Barracks.Network
 		}
 
 		/// <summary>
+		/// Request for the price of buying additional character slots.
+		/// Sent by client when the button to buy is clicked.
+		/// </summary>
+		/// <param name="conn"></param>
+		/// <param name="packet"></param>
+		[PacketHandler(Op.CB_REQ_SLOT_PRICE)]
+		public void CB_REQ_SLOT_PRICE(IBarracksConnection conn, Packet packet)
+		{
+			var price = BarracksServer.Instance.Conf.Barracks.CharacterSlotPrice;
+
+			Send.BC_REQ_SLOT_PRICE(conn, price);
+		}
+
+		/// <summary>
 		/// Sent when a companion moves in the barracks.
 		/// </summary>
 		/// <param name="conn"></param>
@@ -1070,20 +1147,6 @@ namespace Melia.Barracks.Network
 		}
 
 		/// <summary>
-		/// Request for the price of buying additional character slots.
-		/// Sent by client when the button to buy is clicked.
-		/// </summary>
-		/// <param name="conn"></param>
-		/// <param name="packet"></param>
-		[PacketHandler(Op.CB_REQ_SLOT_PRICE)]
-		public void CB_REQ_SLOT_PRICE(IBarracksConnection conn, Packet packet)
-		{
-			var price = BarracksServer.Instance.Conf.Barracks.CharacterSlotPrice;
-
-			Send.BC_REQ_SLOT_PRICE(conn, price);
-		}
-
-		/// <summary>
 		/// Sent when chatting publicly.
 		/// </summary>
 		/// <param name="conn"></param>
@@ -1105,6 +1168,21 @@ namespace Melia.Barracks.Network
 		{
 			var len = packet.GetShort();
 			var msg = packet.GetString();
+		}
+
+		/// <summary>
+		/// Request for latest barracks and character data. Sent when
+		/// selecting a different language.
+		/// </summary>
+		/// <param name="conn"></param>
+		/// <param name="packet"></param>
+		[PacketHandler(Op.CB_RELOAD_BARRACK_CAHR_INFO)]
+		public void CB_RELOAD_BARRACK_CAHR_INFO(IBarracksConnection conn, Packet packet)
+		{
+			Send.BC_NORMAL.SetBarrack(conn, conn.Account.SelectedBarrack);
+			Send.BC_COMMANDER_LIST(conn);
+			Send.BC_NORMAL.CharacterInfo(conn);
+			Send.BC_NORMAL.TeamUI(conn);
 		}
 	}
 }

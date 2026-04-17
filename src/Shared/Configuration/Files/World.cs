@@ -79,6 +79,10 @@ namespace Melia.Shared.Configuration.Files
 		public bool ResurrectRevivalPointOption { get; protected set; }
 		public bool ResurrectSoulCrystalOption { get; protected set; }
 
+		// monsters.conf
+		public TimeSpan DefaultMinRespawn { get; protected set; }
+		public TimeSpan DefaultMaxRespawn { get; protected set; }
+
 		// quests.conf
 		public bool DisplayQuestObjectives { get; protected set; }
 		public bool EnableProceduralQuests { get; protected set; }
@@ -92,6 +96,7 @@ namespace Melia.Shared.Configuration.Files
 		public float MonsterSkillSpeedRate { get; protected set; }
 		public float MonsterSkillDelayRate { get; protected set; }
 		public bool FreezeAffectsElement { get; protected set; }
+		public float MaxDamageCap { get; protected set; }
 
 		// storage.conf
 		public int StorageFee { get; protected set; }
@@ -136,6 +141,16 @@ namespace Melia.Shared.Configuration.Files
 		public bool EliteAlwaysAggressive { get; protected set; }
 		public float RedOrbJackpotRate { get; protected set; }
 		public float RedOrbEliteRate { get; protected set; }
+
+		// mythic monsters
+		public float MythicSpawnChance { get; protected set; }
+		public int MythicMinLevel { get; protected set; }
+		public bool MythicAlwaysAggressive { get; protected set; }
+		public float MythicHPSPRate { get; protected set; }
+		public float MythicStatRate { get; protected set; }
+		public float MythicExpRate { get; protected set; }
+		public int MythicRolls { get; protected set; }
+		public float MythicGuaranteedItemThreshold { get; protected set; }
 
 		// boss_monsters.conf
 		public float BossHPSPRate { get; protected set; }
@@ -204,6 +219,10 @@ namespace Melia.Shared.Configuration.Files
 		public int OrphanCleanupCycles { get; protected set; }
 		public int OrphanCleanupBatchSize { get; protected set; }
 
+		// Log cleanup settings
+		public int LogCleanupRetentionDays { get; protected set; }
+		public int LogCleanupIntervalHours { get; protected set; }
+
 		// party.conf - Quest Sharing
 		public bool PartyQuestSharingEnabled { get; protected set; }
 		public float PartyQuestSharingRange { get; protected set; }
@@ -258,7 +277,7 @@ namespace Melia.Shared.Configuration.Files
 
 			this.StorageFee = this.GetInt("storage_fee", 20);
 			this.StorageExtCost = this.GetInt("storage_ext_cost", 20);
-			this.StorageDefaultSize = this.GetInt("storage_default_size", 60);
+			this.StorageDefaultSize = this.GetInt("storage_default_size", 110);
 			this.StorageMaxSize = this.GetInt("storage_max_size", 110);
 			this.StorageMultiStack = this.GetBool("storage_multi_stack", true);
 			this.TeamStorageDefaultSize = this.GetInt("team_storage_default_size", 5);
@@ -306,6 +325,9 @@ namespace Melia.Shared.Configuration.Files
 			this.ResurrectCityOption = this.GetBool("resurrect_city_option", true);
 			this.ResurrectSoulCrystalOption = this.GetBool("resurrect_soul_crystal_option", true);
 
+			this.DefaultMinRespawn = TimeSpan.FromSeconds(this.GetInt("default_min_respawn", 30));
+			this.DefaultMaxRespawn = TimeSpan.FromSeconds(this.GetInt("default_max_respawn", 60));
+
 			this.DisplayQuestObjectives = this.GetBool("display_quest_objectives", true);
 			this.EnableProceduralQuests = this.GetBool("enable_procedural_quests", false);
 
@@ -317,6 +339,7 @@ namespace Melia.Shared.Configuration.Files
 			this.MonsterSkillSpeedRate = this.GetFloat("monster_skill_speed_rate", 1);
 			this.MonsterSkillDelayRate = this.GetFloat("monster_skill_delay_rate", 1);
 			this.FreezeAffectsElement = this.GetBool("freeze_affects_element", false);
+			this.MaxDamageCap = this.GetFloat("max_damage_cap", 200_000_000);
 
 			this.BlueOrbFollowWarp = this.GetBool("blue_orb_follow_warp", false);
 			this.BlueOrbPetSystem = this.GetBool("blue_orb_pet_system", false);
@@ -346,6 +369,15 @@ namespace Melia.Shared.Configuration.Files
 			this.RedOrbJackpotRate = this.GetFloat("red_orb_jackpot_rate", 10000);
 			this.RedOrbEliteRate = this.GetFloat("red_orb_elite_rate", 1000);
 
+			this.MythicSpawnChance = this.GetFloat("mythic_spawn_chance", 0.1f);
+			this.MythicMinLevel = this.GetInt("mythic_min_level", 20);
+			this.MythicAlwaysAggressive = this.GetBool("mythic_always_aggressive", true);
+			this.MythicHPSPRate = this.GetFloat("mythic_hpsp_rate", 600);
+			this.MythicStatRate = this.GetFloat("mythic_stat_rate", 400);
+			this.MythicExpRate = this.GetFloat("mythic_exp_rate", 3000);
+			this.MythicRolls = this.GetInt("mythic_rolls", 15);
+			this.MythicGuaranteedItemThreshold = this.GetFloat("mythic_guaranteed_item_threshold", 5);
+
 			this.BossHPSPRate = this.GetFloat("boss_hpsp_rate", 100);
 			this.BossStatRate = this.GetFloat("boss_stat_rate", 100);
 			this.BossExpRate = this.GetFloat("boss_exp_rate", 100);
@@ -362,6 +394,9 @@ namespace Melia.Shared.Configuration.Files
 			this.OrphanCleanupEnabled = this.GetBool("orphan_cleanup_enabled", true);
 			this.OrphanCleanupCycles = this.GetInt("orphan_cleanup_cycles", 144);
 			this.OrphanCleanupBatchSize = this.GetInt("orphan_cleanup_batch_size", 10000);
+
+			this.LogCleanupRetentionDays = this.GetInt("log_cleanup_retention_days", 7);
+			this.LogCleanupIntervalHours = this.GetInt("log_cleanup_interval_hours", 6);
 
 			this.GlobalDropSuperMobItemThreshold = this.GetBool("global_drop_super_mob_item_threshold", false);
 			this.GlobalDropSuperMobItemReroll = this.GetBool("global_drop_super_mob_item_reroll", false);

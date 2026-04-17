@@ -21,16 +21,27 @@ namespace Melia.Zone.World.Actors.Characters
 		}
 
 		/// <summary>
+		/// Returns ids of equipped items with briquetting appearance
+		/// overrides applied.
+		/// </summary>
+		public int[] GetVisualEquipIds()
+		{
+			return this.Inventory.GetVisualEquipIds();
+		}
+
+		/// <summary>
 		/// Returns true if the character is wearing any armor piece of the given armor material type.
 		/// </summary>
 		public bool IsWearingArmorOfType(ArmorMaterialType armorType)
 		{
-			var equipIds = this.GetEquipIds();
 			var armorSlots = new[] { EquipSlot.Shoes, EquipSlot.Top, EquipSlot.Pants, EquipSlot.Gloves };
 			var armorCount = armorSlots.Count(slot =>
 			{
-				var itemId = equipIds[(int)slot];
-				return ZoneServer.Instance.Data.ItemDb.TryFind(itemId, out var item) && item.Material == armorType;
+				var equippedItem = this.Inventory.GetItem(slot);
+				if (equippedItem == null)
+					return false;
+
+				return ZoneServer.Instance.Data.ItemDb.TryFind(equippedItem.Id, out var item) && item.Material == armorType;
 			});
 			return armorCount > 0;
 		}

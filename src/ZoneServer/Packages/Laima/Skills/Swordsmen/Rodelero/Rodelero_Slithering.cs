@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Melia.Shared.Packages;
@@ -24,13 +24,19 @@ namespace Melia.Zone.Skills.Handlers.Rodelero
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Rodelero_Slithering)]
-	public class Rodelero_SlitheringOverride : IMeleeGroundSkillHandler, IDynamicCasted
+	public class Rodelero_SlitheringOverride : IGroundSkillHandler, IDynamicCasted
 	{
 		/// <summary>
 		/// Called when the skill begins channeling.
 		/// </summary>
 		public void StartDynamicCast(Skill skill, ICombatEntity caster, float maxCastTime)
 		{
+			if (!caster.TrySpendSp(skill))
+			{
+				caster.ServerMessage(Localization.Get("Not enough SP."));
+				return;
+			}
+
 			caster.RemoveBuff(BuffId.Slithering_Buff);
 			caster.StartBuff(BuffId.Slithering_Buff, skill.Level, 0f, TimeSpan.Zero, caster);
 			caster.PlaySound("voice_archer_camouflage_shot", "voice_archer_m_camouflage_shot");
@@ -48,14 +54,8 @@ namespace Melia.Zone.Skills.Handlers.Rodelero
 		/// <summary>
 		/// Handles the Slithering skill execution.
 		/// </summary>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
-			if (!caster.TrySpendSp(skill))
-			{
-				caster.ServerMessage(Localization.Get("Not enough SP."));
-				return;
-			}
-
 			skill.IncreaseOverheat();
 			caster.SetAttackState(true);
 

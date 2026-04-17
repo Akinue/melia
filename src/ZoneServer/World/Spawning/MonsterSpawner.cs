@@ -45,7 +45,6 @@ namespace Melia.Zone.World.Spawning
 		private TimeSpan _flexSpawnDelay = TimeSpan.MaxValue;
 		private readonly List<TimeSpan> _respawnDelays = new();
 
-		private readonly Random _rnd = new(RandomProvider.GetSeed());
 
 		private SpawnAreaCollection _spawnAreas;
 		private bool _spawnPointsLoadFailed;
@@ -175,11 +174,16 @@ namespace Melia.Zone.World.Spawning
 		}
 
 		/// <summary>
-		/// Initializes the population by setting current monster amount to zero
+		/// Resets the spawner to its initial state, as if the server
+		/// just started. Amount is zeroed, the initial spawn flag is
+		/// cleared, and the spawn delay is reset to the configured
+		/// initial delay so the spawner repopulates from scratch.
 		/// </summary>
 		public void InitializePopulation()
 		{
 			this.Amount = 0;
+			_initialSpawnDone = false;
+			_flexSpawnDelay = this.InitialDelay;
 		}
 
 		/// <summary>
@@ -199,16 +203,20 @@ namespace Melia.Zone.World.Spawning
 				if (!_spawnAreas.TryGetRandomLocation(out var map, out var pos))
 					return;
 
+				if (map.IsDormant)
+					continue;
+
 				if (isRootCrystal && !this.TryGetRootCrystalPosition(map, batchPositions, ref pos))
 					continue;
 
 				if (!this.Maps.Contains(map.Id))
 					this.Maps.Add(map.Id);
 
-				var monster = new Mob(_monsterData.Id, RelationType.Enemy);
+				var monster = new Mob(_monsterData.Id);
 				monster.Position = pos;
 				monster.FromGround = true;
 				monster.Tendency = this.Tendency;
+				monster.Spawner = this;
 				monster.Died += this.OnMonsterDied;
 
 				// Set spawn position early for any initialization that needs it
@@ -229,6 +237,7 @@ namespace Melia.Zone.World.Spawning
 				this.Spawning?.Invoke(this, new SpawnEventArgs(this, monster));
 
 				this.HandleRareMonsterLogic(monster, map);
+				this.ApplySpawnBuffs(monster, map);
 
 				// Now add the monster to the map (which may be queued)
 				map.AddMonster(monster);
@@ -283,9 +292,9 @@ namespace Melia.Zone.World.Spawning
 		/// <param name="existingCrystals"></param>
 		/// <param name="batchPositions"></param>
 		/// <returns></returns>
-		private bool IsTooCloseToRootCrystal(Position pos, IMonster[] existingCrystals, List<Position> batchPositions)
+		private bool IsTooCloseToRootCrystal(Position pos, List<IMonster> existingCrystals, List<Position> batchPositions)
 		{
-			for (var i = 0; i < existingCrystals.Length; i++)
+			for (var i = 0; i < existingCrystals.Count; i++)
 			{
 				if (pos.InRange2D(existingCrystals[i].Position, RootCrystalMinSpacing))
 					return true;
@@ -318,6 +327,41 @@ namespace Melia.Zone.World.Spawning
 			{
 				// Clear the map reference since it will be set properly when actually added
 				monster.Map = null;
+			}
+		}
+
+		/// <summary>
+		/// Applies spawn buffs registered on the map to the monster.
+		/// Skips buffs the monster already has (e.g. from PossiblyBecomeRare).
+		/// </summary>
+		/// <param name="monster"></param>
+		/// <param name="map"></param>
+		private void ApplySpawnBuffs(Mob monster, Map map)
+		{
+			var spawnBuffs = map.GetSpawnBuffs();
+			if (spawnBuffs.Length == 0)
+				return;
+
+			foreach (var entry in spawnBuffs)
+			{
+				if (entry.MonsterClassId != 0 && entry.MonsterClassId != monster.Id)
+					continue;
+
+				if (monster.IsBuffActive(entry.BuffId))
+					continue;
+
+				if (RandomProvider.Get().NextDouble() * 100 >= entry.Chance)
+					continue;
+
+				monster.Map = map;
+				try
+				{
+					monster.StartBuff(entry.BuffId, entry.NumArg1, entry.NumArg2, TimeSpan.Zero, monster);
+				}
+				finally
+				{
+					monster.Map = null;
+				}
 			}
 		}
 
@@ -358,8 +402,23 @@ namespace Melia.Zone.World.Spawning
 			this.Amount--;
 			_flexMeter += FlexMeterIncreasePerDeath;
 
+			var delay = RandomProvider.Get().Between(this.MinRespawnDelay, this.MaxRespawnDelay);
+
 			lock (_respawnDelays)
-				_respawnDelays.Add(this.GetRandomRespawnDelay());
+				_respawnDelays.Add(delay);
+		}
+
+		/// <summary>
+		/// Notifies the spawner that monsters were removed due to map
+		/// dormancy. Decrements the amount so the spawner knows it
+		/// needs to respawn them. Existing respawn delays and flex
+		/// state are preserved to respect boss timers and other
+		/// long-delay spawners.
+		/// </summary>
+		/// <param name="removedCount"></param>
+		public void NotifyDormancy(int removedCount)
+		{
+			this.InitializePopulation();
 		}
 
 		/// <summary>
@@ -418,7 +477,11 @@ namespace Melia.Zone.World.Spawning
 					_respawnDelays[i] = spawnDelay - elapsed;
 				}
 
-				expiredDelayCount = _respawnDelays.Count(d => d <= TimeSpan.Zero);
+				expiredDelayCount = 0;
+				for (var j = 0; j < _respawnDelays.Count; j++)
+					if (_respawnDelays[j] <= TimeSpan.Zero)
+						expiredDelayCount++;
+
 				if (expiredDelayCount == 0)
 					return;
 
@@ -427,17 +490,16 @@ namespace Melia.Zone.World.Spawning
 				// and get picked up on subsequent ticks.
 				var removeCount = Math.Min(expiredDelayCount, MaxSpawnsPerTick);
 				var removed = 0;
-				_respawnDelays.RemoveAll(d =>
+				for (var j = _respawnDelays.Count - 1; j >= 0; j--)
 				{
 					if (removed >= removeCount)
-						return false;
-					if (d <= TimeSpan.Zero)
+						break;
+					if (_respawnDelays[j] <= TimeSpan.Zero)
 					{
+						_respawnDelays.RemoveAt(j);
 						removed++;
-						return true;
 					}
-					return false;
-				});
+				}
 
 				expiredDelayCount = removed;
 			}
@@ -473,12 +535,13 @@ namespace Melia.Zone.World.Spawning
 				// Spawn the full amount on the first flex spawn to get up
 				// to the flex amount without delay.
 				if (!_initialSpawnDone)
-				{
 					spawnAmount = potentialSpawnAmount;
-					_initialSpawnDone = true;
-				}
 
+				var amountBefore = this.Amount;
 				this.Spawn(spawnAmount);
+
+				if (!_initialSpawnDone && this.Amount > amountBefore)
+					_initialSpawnDone = true;
 			}
 		}
 
@@ -508,11 +571,5 @@ namespace Melia.Zone.World.Spawning
 			}
 		}
 
-		/// <summary>
-		/// Returns a random delay between min and max respawn delay.
-		/// </summary>
-		/// <returns></returns>
-		private TimeSpan GetRandomRespawnDelay()
-			=> _rnd.Between(this.MinRespawnDelay, this.MaxRespawnDelay);
 	}
 }

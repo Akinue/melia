@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading.Tasks;
 using Melia.Shared.Packages;
 using Melia.Shared.Data.Database;
@@ -19,9 +19,9 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Rogue
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Rogue_Feint)]
-	public class Rogue_FeintOverride : IMeleeGroundSkillHandler
+	public class Rogue_FeintOverride : IGroundSkillHandler
 	{
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -49,7 +49,7 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Rogue
 
 			foreach (var target in targets.LimitBySDR(caster, skill))
 			{
-				target.StartBuff(BuffId.Feint_Debuff, skill.Level, 0, duration, caster);
+				target.StartBuff(BuffId.Feint_Debuff, skill.Level, 0, duration, caster, skill.Id);
 			}
 		}
 	}

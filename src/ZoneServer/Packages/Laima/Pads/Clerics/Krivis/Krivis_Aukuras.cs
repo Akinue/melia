@@ -8,13 +8,12 @@ using Melia.Zone.World.Actors;
 using Melia.Zone.Scripting;
 using Melia.Zone.Skills.Combat;
 using Melia.Zone.Skills;
-using Yggdrasil.Scheduling;
 
 namespace Melia.Zone.Pads.Handlers
 {
 	[Package("laima")]
 	[PadHandler(PadName.Cleric_New_Aukuras)]
-	public class Krivis_AukurasOverride : ICreatePadHandler, IDestroyPadHandler, IUpdatePadHandler
+	public class Krivis_AukurasOverride : ICreatePadHandler, IDestroyPadHandler, IEnterPadHandler, IUpdatePadHandler
 	{
 		private const int PadLifeTimeSeconds = 300;
 
@@ -23,18 +22,20 @@ namespace Melia.Zone.Pads.Handlers
 			var pad = args.Trigger;
 			var creator = args.Creator;
 
-			Send.ZC_NORMAL.PadUpdate(creator, pad, true);
+			Send.ZC_NORMAL.PadUpdate(pad, true);
 			pad.SetRange(150f);
 			pad.Trigger.LifeTime = TimeSpan.FromSeconds(PadLifeTimeSeconds);
+			pad.SetUpdateInterval(300);
+			pad.FollowsTarget(creator);
 		}
 
 		public void Destroyed(object sender, PadTriggerArgs args)
 		{
 			var pad = args.Trigger;
 			var creator = args.Creator;
-			var skill = pad.Skill;
 
-			Send.ZC_NORMAL.PadUpdate(creator, pad, false);
+			Send.ZC_NORMAL.PadUpdate(pad, false);
+			PadRemoveBuff(pad, RelationType.All, 0, 0, BuffId.Aukuras_Buff);
 		}
 
 		public void Entered(object sender, PadTriggerActorArgs args)
@@ -52,7 +53,7 @@ namespace Melia.Zone.Pads.Handlers
 				return;
 
 			var hpRegenAmount = this.GetHPRegenAmount(creator, initiator, skill, (int)abilityLevel);
-			initiator.StartBuff(BuffId.Aukuras_Buff, skill.Level, hpRegenAmount, TimeSpan.FromMilliseconds(5000f), creator);
+			initiator.StartBuff(BuffId.Aukuras_Buff, skill.Level, hpRegenAmount, pad.Trigger.RemainingLifeTime, creator);
 		}
 
 		public void Updated(object sender, PadTriggerArgs args)
@@ -61,8 +62,6 @@ namespace Melia.Zone.Pads.Handlers
 			var creator = args.Creator;
 			var skill = pad.Skill;
 			var abilityLevel = pad.NumArg2;
-
-			pad.Position = creator.Position;
 
 			if (creator.IsDead)
 			{
@@ -83,17 +82,10 @@ namespace Melia.Zone.Pads.Handlers
 					continue;
 
 				var hpRegenAmount = this.GetHPRegenAmount(creator, target, skill, (int)abilityLevel);
-				target.StartBuff(BuffId.Aukuras_Buff, skill.Level, hpRegenAmount, TimeSpan.FromMilliseconds(5000f), creator);
+				target.StartBuff(BuffId.Aukuras_Buff, skill.Level, hpRegenAmount, pad.Trigger.RemainingLifeTime, creator);
 			}
 		}
 
-		/// <summary>
-		/// Returns the healing power of the skill.
-		/// </summary>
-		/// <param name="caster"></param>
-		/// <param name="target"></param>
-		/// <param name="skill"></param>
-		/// <returns></returns>
 		private float GetHPRegenAmount(ICombatEntity caster, ICombatEntity target, Skill skill, int abilityLevel)
 		{
 			var SCR_CalculateHeal = ScriptableFunctions.Combat.Get("SCR_CalculateHeal");
@@ -101,7 +93,8 @@ namespace Melia.Zone.Pads.Handlers
 			var skillHitResult = new SkillHitResult();
 			var hpRegenAmount = SCR_CalculateHeal(caster, target, skill, modifier, skillHitResult);
 
-			hpRegenAmount *= 1f + abilityLevel * 0.005f;
+			var SCR_Get_AbilityReinforceRate = ScriptableFunctions.Skill.Get("SCR_Get_AbilityReinforceRate");
+			hpRegenAmount *= 1f + SCR_Get_AbilityReinforceRate(skill);
 
 			return hpRegenAmount;
 		}

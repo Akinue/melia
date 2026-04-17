@@ -8,6 +8,7 @@ using Melia.Shared.World;
 using Melia.Zone.Buffs;
 using Melia.Zone.Network;
 using Melia.Zone.Scripting;
+using Melia.Zone.World.Actors;
 using Melia.Zone.World.Actors.Characters;
 using Melia.Zone.World.Actors.CombatEntities.Components;
 using Yggdrasil.Scheduling;
@@ -39,6 +40,17 @@ namespace Melia.Zone.World.Actors.Monsters
 		/// A reference to the character which owns this companion.
 		/// </summary>
 		public Character Owner { get; private set; }
+
+		/// <summary>
+		/// Returns the layer on which this companion exists.
+		/// When activated, always matches the owner's layer so the
+		/// companion stays visible after layer changes (e.g. dungeons).
+		/// </summary>
+		public override int Layer
+		{
+			get => this.IsActivated && this.Owner != null ? this.Owner.Layer : base.Layer;
+			set => base.Layer = value;
+		}
 
 		/// <summary>
 		/// Companion's slot in the companion list.
@@ -80,6 +92,14 @@ namespace Melia.Zone.World.Actors.Monsters
 		public long TotalExp { get; set; }
 		public DateTime AdoptTime { get; set; }
 		public bool IsRiding { get; set; } = false;
+
+		/// <summary>
+		/// Whether the companion should mount its owner when it becomes
+		/// visible on the client. Set during map change when the owner
+		/// was riding before warping. The mount buff is applied once
+		/// the companion appears to the owner via HandleAppearingSingleMonster.
+		/// </summary>
+		public bool PendingMount { get; set; } = false;
 
 		/// <summary>
 		/// Whether the companion is in aggressive mode (auto-attack).
@@ -181,6 +201,7 @@ namespace Melia.Zone.World.Actors.Monsters
 			Send.ZC_OBJECT_PROPERTY(this.Owner.Connection, this, PropertyName.IsActivated);
 			if (isActive)
 			{
+				this.Map?.RemoveMonster(this);
 				this.Map = this.Owner.Map;
 				this.Layer = this.Owner.Layer;
 				this.OwnerHandle = this.Owner.Handle;
@@ -202,6 +223,13 @@ namespace Melia.Zone.World.Actors.Monsters
 				Send.ZC_PET_AUTO_ATK(this.Owner, this);
 				Send.ZC_NORMAL.PetInfo(this.Owner);
 				// Note: PvP/duel relation handling is done in HandleAppearingMonsters
+
+				if (this.Owner.Variables.Perm.GetBool("Melia.WasRidingOnWarp"))
+				{
+					this.Owner.Variables.Perm.Remove("Melia.WasRidingOnWarp");
+					if (!this.IsDead && !this.IsBird)
+						this.PendingMount = true;
+				}
 			}
 			else
 			{
@@ -236,10 +264,10 @@ namespace Melia.Zone.World.Actors.Monsters
 			var level = this.Level;
 			var levelUps = 0;
 			var maxExp = this.MaxExp;
-			var maxLevel = ZoneServer.Instance.Data.ExpDb.GetMaxLevel();
+			var maxLevel = ZoneServer.Instance.Conf.World.MaxCompanionLevel;
 
 			// Consume EXP as many times as possible to reach new levels
-			while (this.Exp >= maxExp && level < maxLevel)
+			while (maxExp > 0 && this.Exp >= maxExp && level < maxLevel)
 			{
 				this.Exp -= maxExp;
 
@@ -264,10 +292,18 @@ namespace Melia.Zone.World.Actors.Monsters
 			if (amount < 1)
 				throw new ArgumentException("Amount can't be lower than 1.");
 
-			var newLevel = this.Properties.Modify(PropertyName.Lv, amount);
+			// Use the Level setter so both PropertyName.Lv and the Mob's
+			// cached level field stay in sync. Calling Properties.Modify
+			// directly bypasses the setter and leaves _cachedLevel stale,
+			// which corrupts subsequent GiveExp calls and DB saves.
+			var newLevel = this.Level + amount;
+			this.Level = newLevel;
 
-			this.MaxExp = ZoneServer.Instance.Data.ExpDb.GetNextExp(ExpType.Pet, (int)newLevel);
+			this.MaxExp = ZoneServer.Instance.Data.ExpDb.GetNextExp(ExpType.Pet, newLevel);
 			this.Heal(this.MaxHp, 0);
+
+			Send.ZC_OBJECT_PROPERTY(this.Owner.Connection, this);
+			Send.ZC_NORMAL.PetInfo(this.Owner);
 
 			this.PlayEffect("F_companion_level_up", 3);
 		}
@@ -290,6 +326,9 @@ namespace Melia.Zone.World.Actors.Monsters
 		/// <param name="attackState"></param>
 		private void OnCombatStateChanged(ICombatEntity combatEntity, bool attackState)
 		{
+			if (this.Map == null)
+				return;
+
 			this.Properties.Invalidate(PropertyName.RHPTIME);
 		}
 

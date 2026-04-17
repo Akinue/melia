@@ -173,6 +173,9 @@ namespace Melia.Zone.World.Actors.Characters
 
 			if (this.ActiveCompanion != null)
 			{
+				if (this.IsRiding)
+					this.RemoveBuff(BuffId.RidingCompanion);
+
 				_companionToReactivate = this.ActiveCompanion;
 				this.Companions.ActiveCompanion.SetCompanionState(false);
 			}
@@ -218,7 +221,7 @@ namespace Melia.Zone.World.Actors.Characters
 		/// <summary>
 		/// Resurrects the character if its dead.
 		/// </summary>
-		public void Resurrect(ResurrectOptions option)
+		public void Resurrect(ResurrectOptions option, float hpPercent = 1f)
 		{
 			if (option == ResurrectOptions.SoulCrystal)
 			{
@@ -255,7 +258,7 @@ namespace Melia.Zone.World.Actors.Characters
 				case ResurrectOptions.SoulCrystal:
 				default:
 				{
-					this.Heal(this.MaxHp, 0);
+					this.Heal(this.MaxHp * hpPercent, 0);
 					break;
 				}
 			}
@@ -362,7 +365,8 @@ namespace Melia.Zone.World.Actors.Characters
 		}
 
 		/// <summary>
-		/// Returns if the character can be staggered.
+		/// Returns if the character can be staggered. Players are not
+		/// affected by the stagger system.
 		/// </summary>
 		public bool CanStagger() => false;
 

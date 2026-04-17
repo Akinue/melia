@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.Dialogues;
 using Melia.Zone.World.Actors.Characters;
@@ -22,6 +22,7 @@ public class UnicornHornQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -58,8 +59,6 @@ public class UnicornHornQuestScript : QuestScript
 			{
 				if (player.Inventory.HasItem(PantoHornId, 250))
 				{
-					player.Inventory.RemoveItem(PantoHornId, 250);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("*eyes gleaming* Beautiful specimens! Here's your Unicorn Horn. A purely decorative piece, of course... not that I would know anything about real unicorns... *laughs nervously*"));
 
@@ -97,5 +96,10 @@ public class UnicornHornQuestScript : QuestScript
 		{
 			await dialog.Msg(L("*sighs disappointedly* Very well... I suppose I'll have to continue my research alone. Do come back if you change your mind!"));
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(PantoHornId, 250);
 	}
 }

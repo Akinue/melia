@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Reflection.Emit;
 using Melia.Shared.Packages;
@@ -7,6 +7,7 @@ using Melia.Shared.L10N;
 using Melia.Shared.World;
 using Melia.Zone.Network;
 using Melia.Zone.Skills.Handlers.Base;
+using Melia.Zone.Scripting;
 using Melia.Zone.World.Actors;
 
 namespace Melia.Zone.Skills.Handlers.Archers.Ranger
@@ -16,7 +17,7 @@ namespace Melia.Zone.Skills.Handlers.Archers.Ranger
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Ranger_Scan)]
-	public class Ranger_ScanOverride : IMeleeGroundSkillHandler
+	public class Ranger_ScanOverride : IGroundSkillHandler
 	{
 		private const float BaseCritResistReduce = 20f;
 
@@ -33,12 +34,12 @@ namespace Melia.Zone.Skills.Handlers.Archers.Ranger
 		/// <param name="originPos"></param>
 		/// <param name="farPos"></param>
 		/// <param name="targets"></param>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
-			var target = targets.FirstOrDefault();
 			if (target == null)
 			{
 				caster.ServerMessage(Localization.Get("No target specified."));
+				Send.ZC_SKILL_MELEE_GROUND(caster, skill, originPos, null);
 				return;
 			}
 
@@ -55,10 +56,8 @@ namespace Melia.Zone.Skills.Handlers.Archers.Ranger
 			var accuracy = caster.Properties.GetFloat(PropertyName.HR);
 			var critResistReduce = BaseCritResistReduce + (accuracy * skill.Level * CritResistMultiplierPerLevel);
 
-			var byAbility = 1f;
-			if (caster.TryGetActiveAbility(AbilityId.Ranger51, out var ability))
-				byAbility += ability.Level * 0.005f;
-			critResistReduce *= byAbility;
+			var SCR_Get_AbilityReinforceRate = ScriptableFunctions.Skill.Get("SCR_Get_AbilityReinforceRate");
+			critResistReduce *= 1f + SCR_Get_AbilityReinforceRate(skill);
 
 			target.StartBuff(BuffId.Ranger_Scan_Debuff, skill.Level, critResistReduce, duration, caster);
 

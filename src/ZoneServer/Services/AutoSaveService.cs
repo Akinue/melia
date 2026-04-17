@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using Melia.Zone.Database;
-using Melia.Zone.World;
 using Melia.Zone.World.Actors.Characters;
 using Yggdrasil.Logging;
 
@@ -55,60 +54,46 @@ namespace Melia.Zone.Services
 
 				var savedCount = 0;
 				var failedCount = 0;
-				var remaining = charactersInSlot.Count;
 				var capturedSlot = slotToSave;
 
 				foreach (var character in charactersInSlot)
 				{
-					var capturedChar = character;
-
-					SaveQueue.Enqueue(() =>
+					try
 					{
-						var lockTaken = false;
-						object acquiredLock = null;
-						try
-						{
-							CharacterLockManager.TryAcquire(capturedChar.DbId, TimeSpan.Zero, "AutoSave", ref lockTaken, out acquiredLock);
-							if (lockTaken)
-							{
-								var account = capturedChar.Connection?.Account;
-								var isAutoTrading = capturedChar.IsAutoTrading;
-								var sessionValid = isAutoTrading || _database.CheckSessionKey(account.Id, capturedChar.Connection.SessionKey);
+						var conn = character.Connection;
+						var account = conn?.Account;
+						var sessionKey = conn?.SessionKey;
+						var isAutoTrading = character.IsAutoTrading;
 
-								if (account != null && (capturedChar.IsOnline || isAutoTrading) && sessionValid)
-								{
-									_database.SaveCharacterData(capturedChar);
-									if (!isAutoTrading)
-										_database.SaveAccountData(account);
-									Interlocked.Increment(ref savedCount);
-								}
-								else
-								{
-									Log.Warning($"AutoSaveService: Skipping save for {capturedChar.Name} (logged out, session mismatch, or lock issue during check).");
-									Interlocked.Increment(ref failedCount);
-								}
+						if (account == null && !isAutoTrading)
+						{
+							Log.Warning($"AutoSaveService: Skipping save for {character.Name} ({character.DbId}), account is null.");
+							failedCount++;
+						}
+						else
+						{
+							var sessionValid = isAutoTrading || _database.CheckSessionKey(account.Id, sessionKey);
+
+							if ((character.IsOnline || isAutoTrading) && sessionValid)
+							{
+								_database.SavePlayerData(character, isAutoTrading ? null : account);
+								savedCount++;
 							}
 							else
 							{
-								Log.Debug($"AutoSaveService: Skipping '{capturedChar.Name}' ({capturedChar.DbId}), character lock is busy.");
-								Interlocked.Increment(ref failedCount);
+								Log.Warning($"AutoSaveService: Skipping save for {character.Name} (logged out or session mismatch).");
+								failedCount++;
 							}
 						}
-						catch (Exception ex)
-						{
-							Log.Error($"AutoSaveService: Error saving character {capturedChar?.Name ?? "Unknown"} (ID: {capturedChar?.DbId ?? 0}): {ex}");
-							Interlocked.Increment(ref failedCount);
-						}
-						finally
-						{
-							if (lockTaken)
-								CharacterLockManager.Release(acquiredLock, capturedChar.DbId, "AutoSave");
-
-							if (Interlocked.Decrement(ref remaining) == 0)
-								Log.Info($"AutoSaveService: Finished save for slot {capturedSlot}. Saved: {savedCount}, Skipped/Failed: {failedCount}.");
-						}
-					});
+					}
+					catch (Exception ex)
+					{
+						Log.Error($"AutoSaveService: Error saving character {character?.Name ?? "Unknown"} (ID: {character?.DbId ?? 0}): {ex}");
+						failedCount++;
+					}
 				}
+
+				Log.Info($"AutoSaveService: Finished save for slot {capturedSlot}. Saved: {savedCount}, Skipped/Failed: {failedCount}.");
 
 				if (_currentSlot == 0)
 				{
@@ -125,6 +110,48 @@ namespace Melia.Zone.Services
 			{
 				Log.Error($"AutoSaveService: Unhandled exception during auto-save cycle for slot {slotToSave}: {ex}");
 			}
+		}
+
+		/// <summary>
+		/// Stops the periodic timer and saves every online character
+		/// synchronously on the calling thread.
+		/// </summary>
+		/// <returns>Number of characters saved successfully.</returns>
+		public int SaveAllNow()
+		{
+			// Stop the timer so no new callbacks fire.
+			_timer?.Change(Timeout.Infinite, Timeout.Infinite);
+
+			var allChars = _zoneServer.World.GetCharacters().ToList();
+			if (allChars.Count == 0)
+				return 0;
+
+			var savedCount = 0;
+			var failedCount = 0;
+
+			foreach (var character in allChars)
+			{
+				try
+				{
+					if (character == null)
+						continue;
+
+					var account = character.IsAutoTrading ? null : character.Connection?.Account;
+					if (account == null && !character.IsAutoTrading)
+						continue;
+
+					_database.SavePlayerData(character, account);
+					savedCount++;
+				}
+				catch (Exception ex)
+				{
+					failedCount++;
+					Log.Error("SaveAllNow: Error saving {0} (ID: {1}): {2}", character?.Name ?? "?", character?.DbId ?? 0, ex.Message);
+				}
+			}
+
+			Log.Info("SaveAllNow: Saved {0}, Failed {1}.", savedCount, failedCount);
+			return savedCount;
 		}
 
 		public void Dispose()

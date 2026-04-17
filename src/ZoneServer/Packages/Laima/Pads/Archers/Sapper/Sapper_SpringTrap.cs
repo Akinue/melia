@@ -28,7 +28,6 @@ namespace Melia.Zone.Pads.HandlersOverride.Archers.Sapper
 		private const int UpdateIntervalMs = 100;
 		private const int PadLifetimeMs = 120000;
 		private const int DebuffDurationMs = 1000;
-		private const int TrapMaxHP = 10;
 		private const float ReactivationDelayMs = 1000f;
 		private const string RevealedKey = "Melia.SpringTrap.Revealed";
 		private const string CooldownKey = "Melia.SpringTrap.Cooldown";
@@ -39,7 +38,7 @@ namespace Melia.Zone.Pads.HandlersOverride.Archers.Sapper
 			var creator = args.Creator;
 			var skill = pad.Skill;
 
-			Send.ZC_NORMAL.PadUpdate(creator, pad, true);
+			Send.ZC_NORMAL.PadUpdate(pad, true);
 			pad.SetRange(PadRange);
 			pad.SetUpdateInterval(UpdateIntervalMs);
 			pad.Trigger.LifeTime = TimeSpan.FromMilliseconds(PadLifetimeMs);
@@ -49,13 +48,11 @@ namespace Melia.Zone.Pads.HandlersOverride.Archers.Sapper
 			var trap = (Mob)PadAttachMonster(pad, "pcskill_spring_trap", pad.Position, 0, 0, 0, 0, "HitProof#YES", "None", 1, true, "None", "None", true, "SCR_INIT_SAPPER_TRAP");
 			if (trap != null)
 			{
-				var propertyOverrides = new PropertyOverrides();
-				propertyOverrides.Add(PropertyName.HPCount, TrapMaxHP);
-				trap.ApplyOverrides(propertyOverrides);
-				trap.Properties.InvalidateAll();
-				trap.HealToFull();
+				trap.MonsterType = RelationType.Friendly;
+				trap.Faction = FactionType.Law;
+				trap.SetHittable(false);
+				trap.StartBuff(BuffId.Invincible);
 				trap.StartBuff(BuffId.Cover_Buff, TimeSpan.FromMinutes(2));
-				trap.Died += (mob, killer) => pad.Destroy();
 			}
 		}
 
@@ -65,7 +62,7 @@ namespace Melia.Zone.Pads.HandlersOverride.Archers.Sapper
 			var creator = args.Creator;
 
 			pad?.Monster?.Kill(null);
-			Send.ZC_NORMAL.PadUpdate(creator, pad, false);
+			Send.ZC_NORMAL.PadUpdate(pad, false);
 		}
 
 		public void Entered(object sender, PadTriggerActorArgs args)

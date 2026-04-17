@@ -43,8 +43,6 @@ namespace Melia.Zone.World.Spawning
 		private readonly List<TimeSpan> _respawnDelays = new();
 		private readonly Position[] _positions;
 
-		private readonly Random _rnd = new(RandomProvider.GetSeed());
-
 		/// <summary>
 		/// Returns the unique id of this spawner.
 		/// </summary>
@@ -174,10 +172,15 @@ namespace Melia.Zone.World.Spawning
 		/// <param name="amount"></param>
 		public void Spawn(int amount)
 		{
+			var spawned = 0;
+
 			for (var i = 0; i < amount; ++i)
 			{
 				if (!ZoneServer.Instance.World.Maps.TryGet(this.MapId, out var map))
 					throw new InvalidOperationException($"Map '{0}' not found.");
+
+				if (map.IsDormant)
+					continue;
 
 				var monster = new Mob(_monsterData.Id, RelationType.Enemy);
 				if (monster.Rank == MonsterRank.Boss)
@@ -186,7 +189,7 @@ namespace Melia.Zone.World.Spawning
 				}
 				else if (_positions != null && _positions.Length > 0)
 				{
-					monster.Position = _positions[_rnd.Next(_positions.Length)];
+					monster.Position = _positions[RandomProvider.Get().Next(_positions.Length)];
 				}
 				else
 				{
@@ -201,6 +204,7 @@ namespace Melia.Zone.World.Spawning
 				}
 				monster.FromGround = true;
 				monster.Tendency = this.Tendency;
+				monster.Spawner = this;
 				monster.Died += this.OnMonsterDied;
 
 				// Apply map overrides first
@@ -240,11 +244,40 @@ namespace Melia.Zone.World.Spawning
 				map.AddMonster(monster);
 				monster.SpawnPosition = monster.Position;
 				monster.PossiblyBecomeRare();
+				this.ApplySpawnBuffs(monster, map);
 
 				this.Spawned?.Invoke(this, new SpawnEventArgs(this, monster));
+				spawned++;
 			}
 
-			this.Amount += amount;
+			this.Amount += spawned;
+		}
+
+		/// <summary>
+		/// Applies spawn buffs registered on the map to the monster.
+		/// Skips buffs the monster already has (e.g. from PossiblyBecomeRare).
+		/// </summary>
+		/// <param name="monster"></param>
+		/// <param name="map"></param>
+		private void ApplySpawnBuffs(Mob monster, Map map)
+		{
+			var spawnBuffs = map.GetSpawnBuffs();
+			if (spawnBuffs.Length == 0)
+				return;
+
+			foreach (var entry in spawnBuffs)
+			{
+				if (entry.MonsterClassId != 0 && entry.MonsterClassId != monster.Id)
+					continue;
+
+				if (monster.IsBuffActive(entry.BuffId))
+					continue;
+
+				if (RandomProvider.Get().NextDouble() * 100 >= entry.Chance)
+					continue;
+
+				monster.StartBuff(entry.BuffId, entry.NumArg1, entry.NumArg2, TimeSpan.Zero, monster);
+			}
 		}
 
 		/// <summary>
@@ -284,8 +317,20 @@ namespace Melia.Zone.World.Spawning
 			this.Amount--;
 			_flexMeter += FlexMeterIncreasePerDeath;
 
+			var delay = RandomProvider.Get().Between(this.MinRespawnDelay, this.MaxRespawnDelay);
+
 			lock (_respawnDelays)
-				_respawnDelays.Add(this.GetRandomRespawnDelay());
+				_respawnDelays.Add(delay);
+		}
+
+		/// <summary>
+		/// Notifies the spawner that monsters were removed due to map
+		/// dormancy.
+		/// </summary>
+		/// <param name="removedCount"></param>
+		public void NotifyDormancy(int removedCount)
+		{
+			this.Amount = Math.Max(0, this.Amount - removedCount);
 		}
 
 		/// <summary>
@@ -316,11 +361,17 @@ namespace Melia.Zone.World.Spawning
 					_respawnDelays[i] = spawnDelay - elapsed;
 				}
 
-				expiredDelayCount = _respawnDelays.Count(d => d <= TimeSpan.Zero);
+				expiredDelayCount = 0;
+				for (var j = 0; j < _respawnDelays.Count; j++)
+					if (_respawnDelays[j] <= TimeSpan.Zero)
+						expiredDelayCount++;
+
 				if (expiredDelayCount == 0)
 					return;
 
-				_respawnDelays.RemoveAll(d => d <= TimeSpan.Zero);
+				for (var j = _respawnDelays.Count - 1; j >= 0; j--)
+					if (_respawnDelays[j] <= TimeSpan.Zero)
+						_respawnDelays.RemoveAt(j);
 			}
 
 			var spawnAmount = Math.Min(expiredDelayCount, this.FlexAmount - this.Amount);
@@ -388,13 +439,6 @@ namespace Melia.Zone.World.Spawning
 				_flexMeter = FlexMeterDefault;
 			}
 		}
-
-		/// <summary>
-		/// Returns a random delay between min and max respawn delay.
-		/// </summary>
-		/// <returns></returns>
-		private TimeSpan GetRandomRespawnDelay()
-			=> _rnd.Between(this.MinRespawnDelay, this.MaxRespawnDelay);
 
 		/// <summary>
 		/// Finds a safe spawn position for bosses, avoiding other bosses and warps.

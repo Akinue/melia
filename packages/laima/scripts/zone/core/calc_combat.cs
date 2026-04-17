@@ -27,6 +27,34 @@ using Yggdrasil.Util;
 
 public class CombatCalculationsScript : GeneralScript
 {
+	private static readonly (string AtkProperty, string ResistProperty, AttributeType AttributeType)[] AttributeEntries =
+	{
+		(PropertyName.Fire_Atk, PropertyName.ResFire, AttributeType.Fire),
+		(PropertyName.Ice_Atk, PropertyName.ResIce, AttributeType.Ice),
+		(PropertyName.Earth_Atk, PropertyName.ResEarth, AttributeType.Earth),
+		(PropertyName.Lightning_Atk, PropertyName.ResLightning, AttributeType.Lightning),
+		(PropertyName.Poison_Atk, PropertyName.ResPoison, AttributeType.Poison),
+		(PropertyName.Holy_Atk, PropertyName.ResHoly, AttributeType.Holy),
+		(PropertyName.Dark_Atk, PropertyName.ResDark, AttributeType.Dark),
+		(PropertyName.Soul_Atk, PropertyName.ResSoul, AttributeType.Soul),
+	};
+
+	private static readonly (string AtkProperty, string DefProperty, SkillAttackType AttackType)[] AttackTypeEntries =
+	{
+		(PropertyName.Slash_Atk, PropertyName.DefSlash, SkillAttackType.Slash),
+		(PropertyName.Aries_Atk, PropertyName.DefAries, SkillAttackType.Aries),
+		(PropertyName.Strike_Atk, PropertyName.DefStrike, SkillAttackType.Strike),
+	};
+
+	private static readonly Dictionary<RaceType, string> RaceAtkProperties = new()
+	{
+		[RaceType.Klaida] = PropertyName.Klaida_Atk,
+		[RaceType.Paramune] = PropertyName.Paramune_Atk,
+		[RaceType.Forester] = PropertyName.Forester_Atk,
+		[RaceType.Velnias] = PropertyName.Velnias_Atk,
+		[RaceType.Widling] = PropertyName.Widling_Atk,
+	};
+
 	/// <summary>
 	/// Returns a random attack value between the min and max values
 	/// for the type that matches the given skill (PATK or MATK).
@@ -146,6 +174,7 @@ public class CombatCalculationsScript : GeneralScript
 		var SCR_HitCountMultiplier = ScriptableFunctions.Combat.Get("SCR_HitCountMultiplier");
 		var SCR_SizeTypeBonus = ScriptableFunctions.Combat.Get("SCR_SizeTypeBonus");
 		var SCR_AttributeMultiplier = ScriptableFunctions.Combat.Get("SCR_AttributeMultiplier");
+		var SCR_AttributeResistance = ScriptableFunctions.Combat.Get("SCR_AttributeResistance");
 		var SCR_AttackTypeMultiplier = ScriptableFunctions.Combat.Get("SCR_AttackTypeMultiplier");
 		var SCR_RaceMultiplier = ScriptableFunctions.Combat.Get("SCR_RaceMultiplier");
 		var SCR_Combat_BeforeCalc = ScriptableFunctions.Combat.Get("SCR_Combat_BeforeCalc");
@@ -163,10 +192,14 @@ public class CombatCalculationsScript : GeneralScript
 
 		// Check dodge
 		var isMagicSkill = skill.Data.ClassType == SkillClassType.Magic;
+		var SCR_Combat_OnDodge = ScriptableFunctions.Combat.Get("SCR_Combat_OnDodge");
+		var SCR_Combat_OnBlock = ScriptableFunctions.Combat.Get("SCR_Combat_OnBlock");
+
 		var dodgeChance = SCR_GetDodgeChance(attacker, target, skill, modifier, skillHitResult);
 		if (!isMagicSkill && rnd.Next(100) < dodgeChance)
 		{
 			skillHitResult.Result = HitResultType.Dodge;
+			SCR_Combat_OnDodge(attacker, target, skill, modifier, skillHitResult);
 			return 0;
 		}
 
@@ -177,10 +210,13 @@ public class CombatCalculationsScript : GeneralScript
 		if (!isMagicSkill && rnd.Next(100) < blockChance)
 		{
 			skillHitResult.Result = HitResultType.Block;
+			SCR_Combat_OnBlock(attacker, target, skill, modifier, skillHitResult);
 
 			// Nullify damage on successful classic block
 			if (!Feature.IsEnabled("NonNullifyBlocks"))
+			{
 				return 0;
+			}
 		}
 
 		// Get attack, including bonuses
@@ -197,10 +233,9 @@ public class CombatCalculationsScript : GeneralScript
 		{
 			defense -= Math2.Clamp(0, defense, defense * modifier.DefensePenetrationRate);
 
-			var percentIncreaseFactor = 1f + (modifier.DamageMultiplier - 1f);
 			var logFactor = (float)Math.Min(1, Math.Log10(Math.Pow(attack / (defense + 1), 0.8) + 1));
 
-			skillHitResult.Damage = percentIncreaseFactor * attack * logFactor;
+			skillHitResult.Damage = attack * logFactor;
 		}
 		else
 		{
@@ -208,8 +243,6 @@ public class CombatCalculationsScript : GeneralScript
 
 			var skillAtkAdd = skill.Properties.GetFloat(PropertyName.SkillAtkAdd);
 			skillHitResult.Damage += skillAtkAdd;
-
-			skillHitResult.Damage *= modifier.DamageMultiplier;
 
 			defense -= Math2.Clamp(0, defense, defense * modifier.DefensePenetrationRate);
 			skillHitResult.Damage = Math.Max(1, skillHitResult.Damage - defense);
@@ -222,6 +255,12 @@ public class CombatCalculationsScript : GeneralScript
 		{
 			Log.Warning($"SCR_CalculateDamage: {skill.Id} skill factor is {skillFactor}");
 		}
+
+		// Apply equipment/buff SFR bonuses
+		// Additive: +50 means skill factor goes from 500% to 550%
+		if (modifier.SkillFactorBonus != 0)
+			skillFactor += modifier.SkillFactorBonus;
+
 		skillHitResult.Damage *= skillFactor / 100f;
 
 		// After skill factor flat bonuses
@@ -243,6 +282,8 @@ public class CombatCalculationsScript : GeneralScript
 		ItemHookRegistry.Instance.InvokeAttackHooks(ItemHookType.AttackBeforeBonuses, attacker, target, skill, modifier, skillHitResult);
 		ItemHookRegistry.Instance.InvokeDefenseHooks(ItemHookType.DefenseBeforeBonuses, attacker, target, skill, modifier, skillHitResult);
 
+		skillHitResult.Damage *= modifier.DamageMultiplier;
+
 		var sizeBonusDamage = SCR_SizeTypeBonus(attacker, target, skill, modifier, skillHitResult);
 		if (sizeBonusDamage != 0)
 		{
@@ -257,6 +298,10 @@ public class CombatCalculationsScript : GeneralScript
 			if (attribute != AttributeType.None)
 				Send.ZC_NORMAL.PlayTextEffect(target, attacker, "SHOW_SKILL_ATTRIBUTE", attrMultiplier * 100 - 100, $"{attribute}");
 		}
+
+		// Removed in Laima
+		// var attributeDefense = SCR_AttributeResistance(attacker, target, skill, modifier, skillHitResult);
+		// def += attributeDefense;
 
 		var atkTypeMultiplier = SCR_AttackTypeMultiplier(attacker, target, skill, modifier, skillHitResult);
 		if (atkTypeMultiplier != 1)
@@ -333,6 +378,11 @@ public class CombatCalculationsScript : GeneralScript
 			else if (targetMob.Properties.TryGetFloat(PropertyName.HPCount, out _) && skillHitResult.Damage > 0)
 				skillHitResult.Damage = 1;
 		}
+
+		var minCap = 0;
+		var maxCap = ZoneServer.Instance.Conf.World.MaxDamageCap;
+
+		skillHitResult.Damage = Math2.Clamp(minCap, maxCap, skillHitResult.Damage);
 
 		return (int)skillHitResult.Damage;
 	}
@@ -494,13 +544,9 @@ public class CombatCalculationsScript : GeneralScript
 		var totalAdditionalAttack = 0f;
 
 		// Calculate attribute attack bonuses
-		var attributeTypeStrList = new[] { "Fire", "Ice", "Earth", "Lightning", "Poison", "Holy", "Dark", "Soul" };
 		var SCR_GetAddAttackMultiplier = ScriptableFunctions.Combat.Get("SCR_GetAddAttackMultiplier");
-		foreach (var attributeTypeStr in attributeTypeStrList)
+		foreach (var (atkPropertyName, resistPropertyName, attributeType) in AttributeEntries)
 		{
-			var atkPropertyName = $"{attributeTypeStr}_Atk";
-			var resistPropertyName = $"Res{attributeTypeStr}";
-
 			// Check for simulated monster attribute
 			// then fall back to player property
 			var atk = skill.Vars.TryGet(atkPropertyName, out float simulatedAtk)
@@ -526,23 +572,19 @@ public class CombatCalculationsScript : GeneralScript
 			}
 
 			// Apply attribute multiplier
-			// Note: Workaround by creating new skill and forcing the
-			// attribute type
-			var sk = new Skill(attacker, SkillId.Normal_Attack);
 			var skMod = new SkillModifier();
-			var parsed = Enum.TryParse(attributeTypeStr, out AttributeType attributeType);
-			skMod.AttackAttribute = parsed ? attributeType : AttributeType.None;
-			var attributeMultiplier = SCR_AttributeMultiplier(attacker, target, sk, skMod, null);
+			skMod.AttackAttribute = attributeType;
+			var attributeMultiplier = SCR_AttributeMultiplier(attacker, target, skill, skMod, null);
 			attributeAtkBonus *= attributeMultiplier;
 
 			// Apply additional attack multiplier for buffs/debuffs (ResistElements, Conviction, ..)
-			var addAtkMultiplier = SCR_GetAddAttackMultiplier(attacker, target, sk, skMod, skillHitResult);
+			var addAtkMultiplier = SCR_GetAddAttackMultiplier(attacker, target, skill, skMod, skillHitResult);
 			attributeAtkBonus *= addAtkMultiplier;
 
 			// Add the bonus if attacker's bonus exists or if the skill is of
 			// given attribute, reducing incoming damage from a negative bonus
 			var attackerAttr = modifier.AttackAttribute == AttributeType.None ? skill.Data.Attribute : modifier.AttackAttribute;
-			if ((atk > 0) || (parsed && (attackerAttr == attributeType)))
+			if ((atk > 0) || (attackerAttr == attributeType))
 				totalAdditionalAttack += attributeAtkBonus;
 		}
 
@@ -551,41 +593,33 @@ public class CombatCalculationsScript : GeneralScript
 			return totalAdditionalAttack;
 
 		// Calculate attack type bonuses (Players only)
-		var attackTypeStrList = new[] { "Slash", "Aries", "Strike" };
-		foreach (var attackTypeStr in attackTypeStrList)
+		if (skill.Data.AttackType != SkillAttackType.Magic)
 		{
-			if (skill.Data.AttackType == SkillAttackType.Magic)
-				continue;
+			foreach (var (atkPropertyName, defPropertyName, attackType) in AttackTypeEntries)
+			{
+				var atk = attacker.Properties.GetFloat(atkPropertyName, 0);
+				var atkResist = target.Properties.GetFloat(defPropertyName, 0);
 
-			var atkPropertyName = $"{attackTypeStr}_Atk";
-			var resistPropertyName = $"Def{attackTypeStr}";
+				var attackTypeBonus = atk - atkResist;
 
-			var atk = attacker.Properties.GetFloat(atkPropertyName, 0);
-			var atkResist = target.Properties.GetFloat(resistPropertyName, 0);
+				// Apply attack type multiplier
+				var skMod = new SkillModifier();
+				skMod.AttackType = attackType;
+				var atkTypeMultiplier = SCR_AttackTypeMultiplier(attacker, target, skill, skMod, null);
+				attackTypeBonus *= atkTypeMultiplier;
 
-			var attackTypeBonus = atk - atkResist;
-
-			// Apply attack type multiplier
-			// Note: Workaround by creating new skill and forcing the
-			// attack type
-			var sk = new Skill(attacker, SkillId.Normal_Attack);
-			var skMod = new SkillModifier();
-			var parsed = Enum.TryParse(attackTypeStr, out SkillAttackType attackType);
-			skMod.AttackType = parsed ? attackType : SkillAttackType.None;
-			var atkTypeMultiplier = SCR_AttackTypeMultiplier(attacker, target, sk, skMod, null);
-			attackTypeBonus *= atkTypeMultiplier;
-
-			// Add the bonus if attacker's bonus exists or if the skill is of
-			// given attack type, reducing incoming damage from a negative bonus
-			var attackerAtkType = modifier.AttackType == SkillAttackType.None ? skill.AttackType : modifier.AttackType;
-			if ((atk > 0) || (parsed && (attackerAtkType == attackType)))
-				totalAdditionalAttack += attackTypeBonus;
+				// Add the bonus if attacker's bonus exists or if the skill is of
+				// given attack type, reducing incoming damage from a negative bonus
+				var attackerAtkType = modifier.AttackType == SkillAttackType.None ? skill.AttackType : modifier.AttackType;
+				if ((atk > 0) || (attackerAtkType == attackType))
+					totalAdditionalAttack += attackTypeBonus;
+			}
 		}
 
 		// Calculate other attack property bonuses
 		// RaceType
-		if (target.Race != RaceType.None)
-			totalAdditionalAttack += attacker.Properties.GetFloat(target.Race.ToString() + "_Atk", 0);
+		if (target.Race != RaceType.None && RaceAtkProperties.TryGetValue(target.Race, out var raceAtkProperty))
+			totalAdditionalAttack += attacker.Properties.GetFloat(raceAtkProperty, 0);
 
 		// Size
 		switch (target.EffectiveSize)
@@ -664,18 +698,15 @@ public class CombatCalculationsScript : GeneralScript
 		if (skill.Data.ClassType == SkillClassType.Magic)
 			return 0;
 
-		if (attacker is not Character character)
-			return 0;
-
-		var weapon = character.Inventory.GetEquip(EquipSlot.RightHand);
-
-		var targetSize = SizeType.M;
-		if (target is Mob mob)
-			targetSize = mob.Data.Size;
-
-		if (targetSize == SizeType.S) return weapon.Data.SmallSizeBonus;
-		if (targetSize == SizeType.M) return weapon.Data.MediumSizeBonus;
-		if (targetSize == SizeType.L) return weapon.Data.LargeSizeBonus;
+		if (attacker.TryGetItem(EquipSlot.RightHand, out var weapon))
+		{
+			switch (target.EffectiveSize)
+			{
+				case SizeType.S: return weapon.Data.SmallSizeBonus;
+				case SizeType.M: return weapon.Data.MediumSizeBonus;
+				case SizeType.L: return weapon.Data.LargeSizeBonus;
+			}
+		}
 
 		return 0;
 	}
@@ -748,43 +779,134 @@ public class CombatCalculationsScript : GeneralScript
 		{
 			if (attackerAttr == AttributeType.Fire)
 			{
-				if (targetAttr == AttributeType.Earth) return 1.75f;
-				if (targetAttr == AttributeType.Fire) return 0.25f;
+				if (targetAttr == AttributeType.Earth) return 1.50f;
+				if (targetAttr == AttributeType.Fire) return 0.50f;
 			}
 			else if (attackerAttr == AttributeType.Ice)
 			{
-				if (targetAttr == AttributeType.Fire) return 1.75f;
-				if (targetAttr == AttributeType.Ice) return 0.25f;
+				if (targetAttr == AttributeType.Fire) return 1.50f;
+				if (targetAttr == AttributeType.Ice) return 0.50f;
 			}
 			else if (attackerAttr == AttributeType.Lightning)
 			{
-				if (targetAttr == AttributeType.Ice) return 2f;
-				if (targetAttr == AttributeType.Lightning) return 0.25f;
-				if (targetAttr == AttributeType.Earth) return 0.5f;
+				if (targetAttr == AttributeType.Ice) return 1.75f;
+				if (targetAttr == AttributeType.Lightning) return 0.50f;
+				if (targetAttr == AttributeType.Earth) return 0.75f;
 			}
 			else if (attackerAttr == AttributeType.Earth)
 			{
-				if (targetAttr == AttributeType.Lightning) return 1.75f;
-				if (targetAttr == AttributeType.Earth) return 0.25f;
+				if (targetAttr == AttributeType.Lightning) return 1.50f;
+				if (targetAttr == AttributeType.Earth) return 0.50f;
 			}
 			else if (attackerAttr == AttributeType.Poison)
 			{
-				if (targetAttr == AttributeType.Earth) return 1.75f;
-				if (targetAttr == AttributeType.Poison) return 0.25f;
+				if (targetAttr == AttributeType.Earth) return 1.50f;
+				if (targetAttr == AttributeType.Poison) return 0.50f;
 			}
 			else if (attackerAttr == AttributeType.Holy)
 			{
-				if (targetAttr == AttributeType.Dark) return 2f;
-				if (targetAttr == AttributeType.Holy) return 0.25f;
+				if (targetAttr == AttributeType.Dark) return 1.50f;
 			}
 			else if (attackerAttr == AttributeType.Dark)
 			{
-				if (targetAttr == AttributeType.Holy) return 2f;
-				if (targetAttr == AttributeType.Dark) return 0.25f;
+				if (targetAttr == AttributeType.Holy) return 1.50f;
+			}
+			else if (attackerAttr == AttributeType.Soul)
+			{
+				if (targetAttr == AttributeType.Soul) return 1.50f;
 			}
 		}
 
 		return 1;
+	}
+
+	/// <summary>
+	/// Returns a flat defense bonus the target may have against the
+	/// attack's attribute.
+	/// </summary>
+	/// <param name="attacker"></param>
+	/// <param name="target"></param>
+	/// <param name="skill"></param>
+	/// <param name="skillHitResult"></param>
+	/// <returns></returns>
+	[ScriptableFunction]
+	public float SCR_AttributeResistance(ICombatEntity attacker, ICombatEntity target, Skill skill, SkillModifier modifier, SkillHitResult skillHitResult)
+	{
+		if (skill.Data.ClassType != SkillClassType.Magic)
+			return 0;
+
+		var attackerAttr = skill.Data.Attribute;
+
+		if (modifier.AttackAttribute != AttributeType.None)
+			attackerAttr = modifier.AttackAttribute;
+
+		// Characters and monsters appear to have different properties for
+		// attribute resistance, so we'll get both and add them together.
+		// Either entity type can only have one of them.
+		var characterPropertyName = (string)null;
+		var monsterPropertyName = (string)null;
+
+		switch (attackerAttr)
+		{
+			case AttributeType.Fire:
+			{
+				characterPropertyName = PropertyName.ResFire;
+				monsterPropertyName = PropertyName.Fire_Def;
+				break;
+			}
+			case AttributeType.Ice:
+			{
+				characterPropertyName = PropertyName.ResIce;
+				monsterPropertyName = PropertyName.Ice_Def;
+				break;
+			}
+			case AttributeType.Lightning:
+			{
+				characterPropertyName = PropertyName.ResLightning;
+				monsterPropertyName = PropertyName.Lightning_Def;
+				break;
+			}
+			case AttributeType.Earth:
+			{
+				characterPropertyName = PropertyName.ResEarth;
+				monsterPropertyName = PropertyName.Earth_Def;
+				break;
+			}
+			case AttributeType.Poison:
+			{
+				characterPropertyName = PropertyName.ResPoison;
+				monsterPropertyName = PropertyName.Poison_Def;
+				break;
+			}
+			case AttributeType.Holy:
+			{
+				characterPropertyName = PropertyName.ResHoly;
+				monsterPropertyName = PropertyName.Holy_Def;
+				break;
+			}
+			case AttributeType.Dark:
+			{
+				characterPropertyName = PropertyName.ResDark;
+				monsterPropertyName = PropertyName.Dark_Def;
+				break;
+			}
+			case AttributeType.Soul:
+			{
+				characterPropertyName = PropertyName.ResSoul;
+				monsterPropertyName = null; // Soul_Def doesn't exist?
+				break;
+			}
+		}
+
+		var resistance = 0f;
+
+		if (characterPropertyName != null)
+			resistance += target.Properties.GetFloat(characterPropertyName);
+
+		if (monsterPropertyName != null)
+			resistance += target.Properties.GetFloat(monsterPropertyName);
+
+		return resistance;
 	}
 
 	/// <summary>

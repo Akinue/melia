@@ -5,7 +5,6 @@ using System.Linq;
 using System.Security.Cryptography;
 using Melia.Shared.Data.Database;
 using Melia.Shared.Game.Const;
-using Melia.Shared.Util;
 using Melia.Shared.Versioning;
 using Melia.Shared.World;
 using Melia.Zone.Network;
@@ -25,32 +24,6 @@ namespace Melia.Zone
 {
 	public static class Debug
 	{
-		/// <summary>
-		/// Gets or sets whether performance profiling logs are enabled.
-		/// Can be controlled via server configuration or console commands.
-		/// </summary>
-		public static bool IsProfilingEnabled { get; set; } = true;
-
-		/// <summary>
-		/// Starts a profiling block that will be timed and logged upon disposal.
-		/// Returns a disposable object, designed to be used in a 'using' statement.
-		/// If profiling is disabled, returns a dummy object that does nothing.
-		/// </summary>
-		/// <param name="actionName">The name of the action to profile.</param>
-		/// <param name="warningThresholdMs">The threshold in milliseconds to log a WARNING for.</param>
-		/// <returns>An IDisposable to wrap the code block.</returns>
-		public static IDisposable Profile(string actionName, long warningThresholdMs = 1000)
-		{
-			if (IsProfilingEnabled)
-			{
-				return new ActionProfiler(actionName, warningThresholdMs);
-			}
-			else
-			{
-				return NullProfiler.Instance;
-			}
-		}
-
 		/// <summary>
 		/// Temporarily visualizes the shape on the map using friendly
 		/// monsters and range previews.
@@ -81,7 +54,8 @@ namespace Melia.Zone
 					var height = map.Ground.GetHeightAt(pos);
 					pos.Y = height;
 
-					var monster = new Mob(monsterId, RelationType.Neutral);
+					var monster = new Mob(monsterId);
+					monster.Faction = FactionType.Neutral;
 					monster.Position = pos;
 					monster.DisappearTime = DateTime.Now.Add((TimeSpan)duration);
 					map.AddMonster(monster);
@@ -132,7 +106,8 @@ namespace Melia.Zone
 			if (duration == null)
 				duration = TimeSpan.FromSeconds(5);
 
-			var monster = new Mob(10005, RelationType.Friendly);
+			var monster = new Mob(10005);
+			monster.Faction = FactionType.Neutral;
 			monster.Position = pos;
 			monster.DisappearTime = DateTime.Now.Add((TimeSpan)duration);
 			map.AddMonster(monster);

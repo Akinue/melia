@@ -313,6 +313,9 @@ public class CharacterCalculationsScript : GeneralScript
 	[ScriptableFunction]
 	public float SCR_Get_Character_STR_JOB(Character character)
 	{
+		if (!Feature.IsEnabled("JobStatBonuses"))
+			return 0;
+
 		var properties = character.Properties;
 		var jobs = character.Jobs.GetList();
 
@@ -335,6 +338,9 @@ public class CharacterCalculationsScript : GeneralScript
 	[ScriptableFunction]
 	public float SCR_Get_Character_CON_JOB(Character character)
 	{
+		if (!Feature.IsEnabled("JobStatBonuses"))
+			return 0;
+
 		var properties = character.Properties;
 		var jobs = character.Jobs.GetList();
 
@@ -357,6 +363,9 @@ public class CharacterCalculationsScript : GeneralScript
 	[ScriptableFunction]
 	public float SCR_Get_Character_INT_JOB(Character character)
 	{
+		if (!Feature.IsEnabled("JobStatBonuses"))
+			return 0;
+
 		var properties = character.Properties;
 		var jobs = character.Jobs.GetList();
 
@@ -379,6 +388,9 @@ public class CharacterCalculationsScript : GeneralScript
 	[ScriptableFunction]
 	public float SCR_Get_Character_MNA_JOB(Character character)
 	{
+		if (!Feature.IsEnabled("JobStatBonuses"))
+			return 0;
+
 		var properties = character.Properties;
 		var jobs = character.Jobs.GetList();
 
@@ -401,6 +413,9 @@ public class CharacterCalculationsScript : GeneralScript
 	[ScriptableFunction]
 	public float SCR_Get_Character_DEX_JOB(Character character)
 	{
+		if (!Feature.IsEnabled("JobStatBonuses"))
+			return 0;
+
 		var properties = character.Properties;
 		var jobs = character.Jobs.GetList();
 
@@ -597,10 +612,14 @@ public class CharacterCalculationsScript : GeneralScript
 		if (Feature.IsEnabled("FreeRunning"))
 			baseValue = 0;
 
+		// Root crystal buff allows dashing without consuming stamina
+		if (character.Buffs.Has(BuffId.RootCrystalMoveSpeed))
+			return 0;
+
 		// If DashRun is active, the stamina usage is increased. This does
 		// not apply if character is in a city and FreeDashingInCities is
 		// enabled.
-		var isDashRun = properties.GetFloat("DashRun", 0);
+		var isDashRun = properties.GetFloat(PropertyName.DashRun, 0);
 		if (isDashRun > 0 && (!Feature.IsEnabled("FreeDashingInCities") || character.Map?.Data?.Type != MapType.City))
 		{
 			var dashAmount = 500f;
@@ -841,7 +860,8 @@ public class CharacterCalculationsScript : GeneralScript
 
 		var byBuffs = properties.GetFloat(PropertyName.MaxWeight_BM);
 		var byBonus = properties.GetFloat(PropertyName.MaxWeight_Bonus);
-		value += byBuffs + byBonus;
+		var byBuffRate = (float)Math.Floor(value * properties.GetFloat(PropertyName.MaxWeight_RATE_BM));
+		value += byBuffs + byBonus + byBuffRate;
 
 		return value;
 	}
@@ -911,9 +931,10 @@ public class CharacterCalculationsScript : GeneralScript
 		value += byStat;
 
 		// Card percentage bonuses (EQUIP_PATK stores percentage points, e.g., 5 = 5%)
+		var byCards = 0f;
 		var cardPatkRate = character.Inventory.GetCardBonuses(PropertyName.EQUIP_PATK) / 100f;
 		cardPatkRate += character.Inventory.GetCardBonuses(PropertyName.EQUIP_PATK_MAIN) / 100f;
-		value *= (1 + cardPatkRate);
+		byCards = value * cardPatkRate;
 
 		var byBuffs = 0f;
 		byBuffs += properties.GetFloat(PropertyName.PATK_BM);
@@ -928,7 +949,7 @@ public class CharacterCalculationsScript : GeneralScript
 		byRateBuffs += properties.GetFloat(PropertyName.MINPATK_MAIN_RATE_BM);
 		byRateBuffs = (value * byRateBuffs);
 
-		value += byBuffs + byRateBuffs;
+		value += byCards + byBuffs + byRateBuffs;
 
 		var max = SCR_Get_Character_MAXPATK(character);
 		return (int)Math2.Clamp(1, max, value);
@@ -966,9 +987,10 @@ public class CharacterCalculationsScript : GeneralScript
 		value += byStat;
 
 		// Card percentage bonuses (EQUIP_PATK stores percentage points, e.g., 5 = 5%)
+		var byCards = 0f;
 		var cardPatkRate = character.Inventory.GetCardBonuses(PropertyName.EQUIP_PATK) / 100f;
 		cardPatkRate += character.Inventory.GetCardBonuses(PropertyName.EQUIP_PATK_MAIN) / 100f;
-		value *= (1 + cardPatkRate);
+		byCards = value * cardPatkRate;
 
 		var byBuffs = 0f;
 		byBuffs += properties.GetFloat(PropertyName.PATK_BM);
@@ -983,7 +1005,7 @@ public class CharacterCalculationsScript : GeneralScript
 		byRateBuffs += properties.GetFloat(PropertyName.MAXPATK_MAIN_RATE_BM);
 		byRateBuffs = (value * byRateBuffs);
 
-		value += byBuffs + byRateBuffs;
+		value += byCards + byBuffs + byRateBuffs;
 
 		return (int)Math.Max(1, value);
 	}
@@ -1120,8 +1142,9 @@ public class CharacterCalculationsScript : GeneralScript
 		value += byStat;
 
 		// Card percentage bonuses (EQUIP_MATK stores percentage points, e.g., 5 = 5%)
+		var byCards = 0f;
 		var cardMatkRate = character.Inventory.GetCardBonuses(PropertyName.EQUIP_MATK) / 100f;
-		value *= (1 + cardMatkRate);
+		byCards = value * cardMatkRate;
 
 		var byBuffs = 0f;
 		byBuffs += properties.GetFloat(PropertyName.MATK_BM);
@@ -1132,7 +1155,7 @@ public class CharacterCalculationsScript : GeneralScript
 		byRateBuffs += properties.GetFloat(PropertyName.MINMATK_RATE_BM);
 		byRateBuffs = (value * byRateBuffs);
 
-		value += byBuffs + byRateBuffs;
+		value += byCards + byBuffs + byRateBuffs;
 
 		var max = SCR_Get_Character_MAXMATK(character);
 		return (int)Math2.Clamp(1, max, value);
@@ -1170,8 +1193,9 @@ public class CharacterCalculationsScript : GeneralScript
 		value += byStat;
 
 		// Card percentage bonuses (EQUIP_MATK stores percentage points, e.g., 5 = 5%)
+		var byCards = 0f;
 		var cardMatkRate = character.Inventory.GetCardBonuses(PropertyName.EQUIP_MATK) / 100f;
-		value *= (1 + cardMatkRate);
+		byCards = value * cardMatkRate;
 
 		var byBuffs = 0f;
 		byBuffs += properties.GetFloat(PropertyName.MATK_BM);
@@ -1182,7 +1206,7 @@ public class CharacterCalculationsScript : GeneralScript
 		byRateBuffs += properties.GetFloat(PropertyName.MAXMATK_RATE_BM);
 		byRateBuffs = (value * byRateBuffs);
 
-		value += byBuffs + byRateBuffs;
+		value += byCards + byBuffs + byRateBuffs;
 
 		return (int)Math.Max(1, value);
 	}
@@ -1599,12 +1623,13 @@ public class CharacterCalculationsScript : GeneralScript
 
 		var value = byLevel + byStat;
 
+		var byItem = character.Inventory.GetEquipProperties(PropertyName.HEAL_PWR);
 		var byBuffs = character.Properties.GetFloat(PropertyName.HEAL_PWR_BM);
 
 		var rate = character.Properties.GetFloat(PropertyName.HEAL_PWR_RATE_BM);
 		var byRateBuffs = (float)Math.Floor(value * rate);
 
-		value += byBuffs + byRateBuffs;
+		value += byItem + byBuffs + byRateBuffs;
 
 		return (int)value;
 	}
@@ -1713,12 +1738,12 @@ public class CharacterCalculationsScript : GeneralScript
 
 		var baseStat = 100;
 		var byStat = Math.Min(250, properties.GetFloat(PropertyName.DEX));
-		var byBuff = properties.GetFloat(PropertyName.CastingSpeed_BM);
+		var byBuff = Math2.Clamp(0, 100, properties.GetFloat(PropertyName.CastingSpeed_BM));
 
-		// 50% Fixed, 50% Variable cast time
-		var fixedPortion = baseStat * 0.5f;
-		var variablePortion = baseStat * 0.5f * (1 - byStat / 250);
-		var result = fixedPortion + variablePortion - byBuff;
+		// 30% Fixed, 70% Variable cast time
+		var fixedPortion = baseStat * 0.3f;
+		var variablePortion = baseStat * 0.7f * (1 - byStat / 250);
+		var result = (fixedPortion + variablePortion) * (1 - byBuff / 100f);
 
 		// 100% Variable cast time
 		// var result = baseStat * (1 - byStat / 250) - byBuff;

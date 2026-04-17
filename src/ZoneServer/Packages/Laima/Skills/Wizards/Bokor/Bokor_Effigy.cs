@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -16,6 +16,7 @@ using Melia.Zone.World.Actors.CombatEntities.Components;
 using Melia.Zone.World.Actors.Monsters;
 using static Melia.Zone.Skills.SkillUseFunctions;
 using static Melia.Zone.Skills.Helpers.SkillTargetHelper;
+using Yggdrasil.Util;
 
 namespace Melia.Zone.Skills.Handlers.Wizards.Bokor
 {
@@ -24,7 +25,7 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Bokor
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Bokor_Effigy)]
-	public class Bokor_EffigyOverride : IMeleeGroundSkillHandler
+	public class Bokor_EffigyOverride : IGroundSkillHandler
 	{
 		float Range = 250f;
 
@@ -36,7 +37,7 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Bokor
 		/// <param name="originPos"></param>
 		/// <param name="farPos"></param>
 		/// <param name="targets"></param>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -49,7 +50,7 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Bokor
 
 			var skillHandle = ZoneServer.Instance.World.CreateSkillHandle();
 
-			var targetHandle = targets.FirstOrDefault()?.Handle ?? 0;
+			var targetHandle = target?.Handle ?? 0;
 			Send.ZC_SKILL_READY(caster, skill, 1, originPos, farPos);
 			Send.ZC_NORMAL.UpdateSkillEffect(caster, targetHandle, originPos, originPos.GetDirection(farPos), Position.Zero);
 			Send.ZC_SKILL_MELEE_GROUND(caster, skill, farPos, ForceId.GetNew(), null);
@@ -62,7 +63,7 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Bokor
 			await skill.Wait(TimeSpan.FromMilliseconds(250));
 			SkillTargetEffects(skill, caster, "F_blood002_dark", 1.6f, false);
 
-			var maxTargets = 3;
+			var maxTargets = 14;
 			var totalDamage = 0f;
 			var hitTargets = new List<ICombatEntity>();
 
@@ -92,7 +93,8 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Bokor
 					var skillHitInfo = new SkillHitInfo(caster, target, skill, skillHit);
 					Send.ZC_SKILL_HIT_INFO(caster, skillHitInfo);
 
-					target.StartBuff(BuffId.Pollution_Debuff, skill.Level, skillHit.Damage, TimeSpan.FromMilliseconds(6000), caster, skill.Id);
+					if (skillHit.Damage > 0 && RandomProvider.Get().Next(100) < 5)
+						target.StartBuff(BuffId.Pollution_Debuff, skill.Level, skillHit.Damage, TimeSpan.FromMilliseconds(6000), caster, skill.Id);
 				}
 			}
 

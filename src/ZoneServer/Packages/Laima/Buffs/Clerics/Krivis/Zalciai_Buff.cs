@@ -24,6 +24,8 @@ namespace Melia.Zone.Buffs.Handlers
 			var target = buff.Target;
 			var skillLevel = buff.NumArg1;
 			var maxHeal = buff.NumArg2;
+
+			buff.SetUpdateTime(300);
 		}
 
 		public override void WhileActive(Buff buff)
@@ -61,10 +63,11 @@ namespace Melia.Zone.Buffs.Handlers
 					return;
 				}
 
-				var byAbility = 1f;
-				if (caster.TryGetActiveAbilityLevel(AbilityId.Kriwi17, out var level))
-					byAbility += level * 0.005f;
-				amount *= byAbility;
+				if (caster.TryGetSkill(buff.SkillId, out var skill))
+				{
+					var SCR_Get_AbilityReinforceRate = ScriptableFunctions.Skill.Get("SCR_Get_AbilityReinforceRate");
+					amount *= 1f + SCR_Get_AbilityReinforceRate(skill);
+				}
 			}
 
 			buff.Target.Heal(amount, 0);

@@ -25,6 +25,7 @@ public class SnowyReindeerAntlersQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -63,9 +64,6 @@ public class SnowyReindeerAntlersQuestScript : QuestScript
 				if (player.Inventory.HasItem(BlueTiniHornId, BlueTiniHornAmount) &&
 					player.Inventory.HasItem(BlueHohenManeId, BlueHohenManeAmount))
 				{
-					player.Inventory.RemoveItem(BlueTiniHornId, BlueTiniHornAmount);
-					player.Inventory.RemoveItem(BlueHohenManeId, BlueHohenManeAmount);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("{#666666}*examines the materials with practiced hands*{/}"));
 					await dialog.Msg(L("Magnificent! These Blue Tini horns have exactly the shape and curvature I envisioned. And the Hohen manes... feel how soft yet resilient they are, like snow that refuses to melt."));
@@ -108,5 +106,11 @@ public class SnowyReindeerAntlersQuestScript : QuestScript
 			await dialog.Msg(L("{#666666}*returns to his carving*{/}"));
 			await dialog.Msg(L("A wise choice if you feel unprepared. The frozen plains are not kind to those who underestimate them. Return when you are ready, and the fire will still be burning."));
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(BlueTiniHornId, BlueTiniHornAmount);
+		character.Inventory.RemoveItem(BlueHohenManeId, BlueHohenManeAmount);
 	}
 }

@@ -99,54 +99,31 @@
 	{ itemId: 649216, chance: 0.090 }, // Sapphire
 	{ itemId: 649217, chance: 0.090 }  // Ruby
 ]},
-{ mapClassName: "d_cmine_9", items: [
-	{ itemId: 649200, chance: 0.400 }, // Amber
-	{ itemId: 649201, chance: 0.300 }, // Fossilized Lizard Amber
-	{ itemId: 649202, chance: 0.400 }, // Topaz
-	{ itemId: 649203, chance: 0.400 }, // Opal
-	{ itemId: 649204, chance: 0.400 }, // Garnet
-	{ itemId: 649205, chance: 0.400 }, // Obsidian
-	{ itemId: 649206, chance: 0.400 }, // Peridot
-	{ itemId: 649207, chance: 0.400 }, // Zircon
-	{ itemId: 649208, chance: 0.400 }, // Pyrite
-	{ itemId: 649209, chance: 0.300 }, // Bloodstone
-	{ itemId: 649210, chance: 0.300 }, // Cryorite
-	{ itemId: 649211, chance: 0.300 }, // Pyrostone
-	{ itemId: 649212, chance: 0.300 }, // Cryostone
-	{ itemId: 649213, chance: 0.200 }, // Pyranium
-	{ itemId: 649214, chance: 0.200 }, // Cryonium
-	{ itemId: 649215, chance: 0.100 }, // Diamond
-	{ itemId: 649216, chance: 0.100 }, // Sapphire
-	{ itemId: 649217, chance: 0.100 }  // Ruby
-]},
 
 // ============================================================================
 // ROYAL MAUSOLEUM - Attribute Points Theme
 // ============================================================================
 { mapClassName: "d_zachariel_32", items: [
-	{ itemId: 490174, chance: 1.360 }, // Attribute Point Scroll
-	{ itemId: 900415, chance: 1.020 }, // Attribute Point Scroll
-	{ itemId: 490311, chance: 0.136 }  // Attribute Point Scroll
+	{ itemId: 490174, chance: 0.317 }, // 500 Attribute Points
+	{ itemId: 900415, chance: 0.238 }  // 1000 Attribute Points
 ]},
 { mapClassName: "d_zachariel_33", items: [
-	{ itemId: 490174, chance: 1.500 }, // Attribute Point Scroll
-	{ itemId: 900415, chance: 1.120 }, // Attribute Point Scroll
-	{ itemId: 490311, chance: 0.148 }  // Attribute Point Scroll
+	{ itemId: 490174, chance: 0.350 }, // 500 Attribute Points
+	{ itemId: 900415, chance: 0.261 }  // 1000 Attribute Points
 ]},
 { mapClassName: "d_zachariel_34", items: [
-	{ itemId: 490174, chance: 1.660 }, // Attribute Point Scroll
-	{ itemId: 900415, chance: 1.240 }, // Attribute Point Scroll
-	{ itemId: 490311, chance: 0.164 }  // Attribute Point Scroll
+	{ itemId: 490174, chance: 0.387 }, // 500 Attribute Points
+	{ itemId: 900415, chance: 0.289 }  // 1000 Attribute Points
 ]},
 { mapClassName: "d_zachariel_35", items: [
-	{ itemId: 490174, chance: 1.820 }, // Attribute Point Scroll
-	{ itemId: 900415, chance: 1.360 }, // Attribute Point Scroll
-	{ itemId: 490311, chance: 0.180 }  // Attribute Point Scroll
+	{ itemId: 490174, chance: 0.425 }, // 500 Attribute Points
+	{ itemId: 900415, chance: 0.317 }, // 1000 Attribute Points
+	{ itemId: 490311, chance: 0.060 }  // 10000 Attribute Points
 ]},
 { mapClassName: "d_zachariel_36", items: [
-	{ itemId: 490174, chance: 2.000 }, // Attribute Point Scroll
-	{ itemId: 900415, chance: 1.500 }, // Attribute Point Scroll
-	{ itemId: 490311, chance: 0.200 }  // Attribute Point Scroll
+	{ itemId: 490174, chance: 0.467 }, // 500 Attribute Points
+	{ itemId: 900415, chance: 0.350 }, // 1000 Attribute Points
+	{ itemId: 490311, chance: 0.067 }  // 10000 Attribute Points
 ]},
 
 // ============================================================================
@@ -163,66 +140,69 @@
 ]},
 
 // ============================================================================
-// MAGE TOWER - Monster Cards Theme
+// MAGE TOWER - Monster Albums Theme
 // ============================================================================
 { mapClassName: "d_firetower_41", items: [
 	{ itemId: 670001, chance: 0.128 }, // Monster Card Album: Red
 	{ itemId: 670002, chance: 0.128 }, // Monster Card Album: Blue
 	{ itemId: 670003, chance: 0.128 }, // Monster Card Album: Green
 	{ itemId: 670004, chance: 0.128 }, // Monster Card Album: Purple
-	{ itemId: 645631, chance: 0.128 }  // Enhancement Card Lv1
+	{ itemId: 645631, chance: 0.047 }  // Enhancement Card Lv1
 ]},
 { mapClassName: "d_firetower_42", items: [
 	{ itemId: 670001, chance: 0.134 }, // Monster Card Album: Red
 	{ itemId: 670002, chance: 0.134 }, // Monster Card Album: Blue
 	{ itemId: 670003, chance: 0.134 }, // Monster Card Album: Green
 	{ itemId: 670004, chance: 0.134 }, // Monster Card Album: Purple
-	{ itemId: 645631, chance: 0.134 }  // Enhancement Card Lv1
+	{ itemId: 645631, chance: 0.060 }  // Enhancement Card Lv1
 ]},
 { mapClassName: "d_firetower_43", items: [
 	{ itemId: 670001, chance: 0.142 }, // Monster Card Album: Red
 	{ itemId: 670002, chance: 0.142 }, // Monster Card Album: Blue
 	{ itemId: 670003, chance: 0.142 }, // Monster Card Album: Green
 	{ itemId: 670004, chance: 0.142 }, // Monster Card Album: Purple
-	{ itemId: 645631, chance: 0.142 }  // Enhancement Card Lv1
+	{ itemId: 645631, chance: 0.100 }  // Enhancement Card Lv1
 ]},
 { mapClassName: "d_firetower_44", items: [
 	{ itemId: 670001, chance: 0.170 }, // Monster Card Album: Red
 	{ itemId: 670002, chance: 0.170 }, // Monster Card Album: Blue
 	{ itemId: 670003, chance: 0.170 }, // Monster Card Album: Green
 	{ itemId: 670004, chance: 0.170 }, // Monster Card Album: Purple
-	{ itemId: 645631, chance: 0.170 }  // Enhancement Card Lv1
+	{ itemId: 645631, chance: 0.131 }  // Enhancement Card Lv1
 ]},
 { mapClassName: "d_firetower_45", items: [
 	{ itemId: 670001, chance: 0.180 }, // Monster Card Album: Red
 	{ itemId: 670002, chance: 0.180 }, // Monster Card Album: Blue
 	{ itemId: 670003, chance: 0.180 }, // Monster Card Album: Green
 	{ itemId: 670004, chance: 0.180 }, // Monster Card Album: Purple
-	{ itemId: 645631, chance: 0.180 }  // Enhancement Card Lv1
+	{ itemId: 645631, chance: 0.149 }  // Enhancement Card Lv1
 ]},
 
 // ============================================================================
-// DEMON PRISON - Nucle/Sierra Powder Theme
+// DEMON PRISON - Card Enhancement Theme
 // ============================================================================
 { mapClassName: "d_velniasprison_51_1", items: [
-	{ itemId: 649025, chance: 0.904 }, // Nucle Powder
-	{ itemId: 649026, chance: 0.113 }  // Sierra Powder
+	{ itemId: 646071, chance: 0.300 }, // Enhancement Card: 100
+	{ itemId: 646043, chance: 0.150 }  // Enhancement Card: 500
 ]},
 { mapClassName: "d_velniasprison_51_2", items: [
-	{ itemId: 649025, chance: 0.992 }, // Nucle Powder
-	{ itemId: 649026, chance: 0.124 }  // Sierra Powder
+	{ itemId: 646071, chance: 0.376 }, // Enhancement Card: 100
+	{ itemId: 646043, chance: 0.189 }  // Enhancement Card: 500
 ]},
 { mapClassName: "d_velniasprison_51_3", items: [
-	{ itemId: 649025, chance: 1.092 }, // Nucle Powder
-	{ itemId: 649026, chance: 0.137 }  // Sierra Powder
+	{ itemId: 646071, chance: 0.550 }, // Enhancement Card: 100
+	{ itemId: 646043, chance: 0.276 }, // Enhancement Card: 500
+	{ itemId: 645631, chance: 0.015 }  // Enhancement Card Lv1 (2000)
 ]},
 { mapClassName: "d_velniasprison_51_4", items: [
-	{ itemId: 649025, chance: 1.200 }, // Nucle Powder
-	{ itemId: 649026, chance: 0.150 }  // Sierra Powder
+	{ itemId: 646071, chance: 0.526 }, // Enhancement Card: 100
+	{ itemId: 646043, chance: 0.264 }, // Enhancement Card: 500
+	{ itemId: 645631, chance: 0.054 }  // Enhancement Card Lv1 (2000)
 ]},
 { mapClassName: "d_velniasprison_51_5", items: [
-	{ itemId: 649025, chance: 1.320 }, // Nucle Powder
-	{ itemId: 649026, chance: 0.165 }  // Sierra Powder
+	{ itemId: 646071, chance: 0.600 }, // Enhancement Card: 100
+	{ itemId: 646043, chance: 0.300 }, // Enhancement Card: 500
+	{ itemId: 645631, chance: 0.060 }  // Enhancement Card Lv1 (2000)
 ]},
 
 // ============================================================================
@@ -231,27 +211,37 @@
 { mapClassName: "d_limestonecave_52_1", items: [
 	{ itemId: 649009, chance: 0.068 }, // Phydecium
 	{ itemId: 649010, chance: 0.068 }, // Ferinium
-	{ itemId: 649011, chance: 0.068 }  // Portium
+	{ itemId: 649011, chance: 0.068 }, // Portium
+	{ itemId: 649008, chance: 0.068 }, // Chromite
+	{ itemId: 649016, chance: 0.068 }  // Absidium Ore
 ]},
 { mapClassName: "d_limestonecave_52_2", items: [
 	{ itemId: 649009, chance: 0.075 }, // Phydecium
 	{ itemId: 649010, chance: 0.075 }, // Ferinium
-	{ itemId: 649011, chance: 0.075 }  // Portium
+	{ itemId: 649011, chance: 0.075 }, // Portium
+	{ itemId: 649008, chance: 0.075 }, // Chromite
+	{ itemId: 649016, chance: 0.075 }  // Absidium Ore
 ]},
 { mapClassName: "d_limestonecave_52_3", items: [
 	{ itemId: 649009, chance: 0.083 }, // Phydecium
 	{ itemId: 649010, chance: 0.083 }, // Ferinium
-	{ itemId: 649011, chance: 0.083 }  // Portium
+	{ itemId: 649011, chance: 0.083 }, // Portium
+	{ itemId: 649008, chance: 0.083 }, // Chromite
+	{ itemId: 649016, chance: 0.083 }  // Absidium Ore
 ]},
 { mapClassName: "d_limestonecave_52_4", items: [
 	{ itemId: 649009, chance: 0.091 }, // Phydecium
 	{ itemId: 649010, chance: 0.091 }, // Ferinium
-	{ itemId: 649011, chance: 0.091 }  // Portium
+	{ itemId: 649011, chance: 0.091 }, // Portium
+	{ itemId: 649008, chance: 0.091 }, // Chromite
+	{ itemId: 649016, chance: 0.091 }  // Absidium Ore
 ]},
 { mapClassName: "d_limestonecave_52_5", items: [
 	{ itemId: 649009, chance: 0.100 }, // Phydecium
 	{ itemId: 649010, chance: 0.100 }, // Ferinium
-	{ itemId: 649011, chance: 0.100 }  // Portium
+	{ itemId: 649011, chance: 0.100 }, // Portium
+	{ itemId: 649008, chance: 0.100 }, // Chromite
+	{ itemId: 649016, chance: 0.100 }  // Absidium Ore
 ]},
 
 // ============================================================================

@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Melia.Shared.Database;
 using Melia.Shared.Game.Const;
+using Yggdrasil.Db.MySql.SimpleCommands;
 using Melia.Shared.ObjectProperties;
 using Melia.Zone.Buffs.Base;
 using Melia.Zone.World.Actors.Characters;
@@ -27,128 +28,125 @@ namespace Melia.Zone.Database
 		/// </summary>
 		internal void InternalSaveCharacterItems(Character character, MySqlConnection conn, MySqlTransaction trans)
 		{
-			using (Debug.Profile($"SaveItems.Total: {character.Name}", 500))
+			var allItemsInInventory = character.Inventory.GetItems().Values
+				.Concat(character.Inventory.GetEquip().Values)
+				.Concat(character.Inventory.GetCards().Values)
+				.Where(item => item != null && !(item is DummyEquipItem) && !InventoryDefaults.EquipItems.Contains(item.Id))
+				.ToList();
+
+			if (!allItemsInInventory.Any())
 			{
-				var allItemsInInventory = character.Inventory.GetItems().Values
-					.Concat(character.Inventory.GetEquip().Values)
-					.Concat(character.Inventory.GetCards().Values)
-					.Where(item => item != null && !(item is DummyEquipItem) && !InventoryDefaults.EquipItems.Contains(item.Id))
-					.ToList();
-
-				if (!allItemsInInventory.Any())
+				// Clear inventory links if no items exist
+				using (var cmd = new MySqlCommand("DELETE FROM `inventory` WHERE `characterId` = @characterId", conn, trans))
 				{
-					// Clear inventory links if no items exist
-					using (var cmd = new MySqlCommand("DELETE FROM `inventory` WHERE `characterId` = @characterId", conn, trans))
-					{
-						cmd.Parameters.AddWithValue("@characterId", character.DbId);
-						cmd.ExecuteNonQuery();
-					}
-					return;
-				}
-
-				// Step 1 & 2: Persist all items in memory to the `items` table.
-				// After this call, every item in `allItemsInInventory` has a valid, non-zero DbId.
-				this.PersistItemBatch(allItemsInInventory, conn, trans);
-
-				// Step 3: Save properties for all items.
-				this.InternalSaveProperties("item_properties", "itemId", allItemsInInventory, conn, trans);
-
-				// --- Step 4: Reconcile Inventory - The Critical Part ---
-
-				// Get the complete set of item IDs that SHOULD be in the character's inventory table.
-				// We already have this list from above (allItemsInInventory).
-				var currentValidItemDbIds = new HashSet<long>(allItemsInInventory.Select(i => i.DbId));
-
-				// Get the set of item IDs that ARE CURRENTLY linked to the character in the database.
-				var linkedItemDbIdsInDb = new HashSet<long>();
-				using (var cmd = new MySqlCommand("SELECT itemId FROM `inventory` WHERE `characterId` = @characterId FOR UPDATE", conn, trans))
-				{
-					// "FOR UPDATE" locks the selected rows to prevent another transaction from modifying them.
 					cmd.Parameters.AddWithValue("@characterId", character.DbId);
-					using (var reader = cmd.ExecuteReader())
-					{
-						while (reader.Read())
-						{
-							linkedItemDbIdsInDb.Add(reader.GetInt64(0));
-						}
-					}
+					cmd.ExecuteNonQuery();
 				}
+				return;
+			}
 
-				// A) Find items to UNLINK: They are in the DB but not in memory anymore.
-				var itemsToUnlink = linkedItemDbIdsInDb.Except(currentValidItemDbIds).ToList();
-				if (itemsToUnlink.Any())
+			// Step 1 & 2: Persist all items in memory to the `items` table.
+			// After this call, every item in `allItemsInInventory` has a valid, non-zero DbId.
+			this.PersistItemBatch(allItemsInInventory, conn, trans);
+
+			// Step 3: Save properties for all items.
+			this.InternalSaveProperties("item_properties", "itemId", allItemsInInventory, conn, trans);
+
+			// --- Step 4: Reconcile Inventory - The Critical Part ---
+
+			// Get the complete set of item IDs that SHOULD be in the character's inventory table.
+			// We already have this list from above (allItemsInInventory).
+			var currentValidItemDbIds = new HashSet<long>(allItemsInInventory.Select(i => i.DbId));
+
+			// Get the set of item IDs that ARE CURRENTLY linked to the character in the database.
+			var linkedItemDbIdsInDb = new HashSet<long>();
+			using (var cmd = new MySqlCommand("SELECT itemId FROM `inventory` WHERE `characterId` = @characterId FOR UPDATE", conn, trans))
+			{
+				// "FOR UPDATE" locks the selected rows to prevent another transaction from modifying them.
+				cmd.Parameters.AddWithValue("@characterId", character.DbId);
+				using (var reader = cmd.ExecuteReader())
 				{
-					var unlinkParams = itemsToUnlink.Select((id, i) => $"@unlink{i}").ToArray();
-					using (var cmd = new MySqlCommand($"DELETE FROM `inventory` WHERE `characterId` = @characterId AND `itemId` IN ({string.Join(",", unlinkParams)})", conn, trans))
+					while (reader.Read())
 					{
-						cmd.Parameters.AddWithValue("@characterId", character.DbId);
-						for (int k = 0; k < itemsToUnlink.Count; k++) cmd.Parameters.AddWithValue(unlinkParams[k], itemsToUnlink[k]);
-						cmd.ExecuteNonQuery();
+						linkedItemDbIdsInDb.Add(reader.GetInt64(0));
 					}
-					// NOTE: We do NOT delete from the `items` table here. The item might have been traded
-					// to another player. Orphan cleanup should be a separate maintenance task.
 				}
+			}
 
-				// B) Find items to LINK/UPDATE: They are in memory.
-				using (var batchLinks = new BatchInsertCommand("inventory",
-					"ON DUPLICATE KEY UPDATE `sort` = VALUES(`sort`), `equipSlot` = VALUES(`equipSlot`)",
-					conn, trans))
+			// A) Find items to UNLINK: They are in the DB but not in memory anymore.
+			var itemsToUnlink = linkedItemDbIdsInDb.Except(currentValidItemDbIds).ToList();
+			if (itemsToUnlink.Any())
+			{
+				var unlinkParams = itemsToUnlink.Select((id, i) => $"@unlink{i}").ToArray();
+				using (var cmd = new MySqlCommand($"DELETE FROM `inventory` WHERE `characterId` = @characterId AND `itemId` IN ({string.Join(",", unlinkParams)})", conn, trans))
 				{
-					var i = 0;
-					// Add non-equipped items
-					foreach (var itemKV in character.Inventory.GetItems().OrderBy(a => a.Key))
-					{
-						var item = itemKV.Value;
-						// Skip items that weren't persisted (filtered out or null)
-						if (item == null || !currentValidItemDbIds.Contains(item.DbId))
-							continue;
-
-						batchLinks.AddRow(new Dictionary<string, object> {
-							{"characterId", character.DbId},
-							{"itemId", item.DbId},
-							{"sort", i++},
-							{"equipSlot", 0x7F}
-						});
-					}
-
-					// Add equipped items
-					foreach (var equipKVP in character.Inventory.GetEquip())
-					{
-						var item = equipKVP.Value;
-						// Skip items that weren't persisted (filtered out, DummyEquipItem, or default equip)
-						if (item == null || !currentValidItemDbIds.Contains(item.DbId))
-							continue;
-
-						batchLinks.AddRow(new Dictionary<string, object> {
-							{"characterId", character.DbId},
-							{"itemId", item.DbId},
-							{"sort", 0},
-							{"equipSlot", (byte)equipKVP.Key}
-						});
-					}
-
-					// Add equipped cards (using slots 100-115 for card slots 1-15)
-					// Note: Using 100-115 to fit within TINYINT range (max 127)
-					foreach (var cardKVP in character.Inventory.GetCards())
-					{
-						var card = cardKVP.Value;
-						// Skip cards that weren't persisted (filtered out or null)
-						if (card == null || !currentValidItemDbIds.Contains(card.DbId))
-							continue;
-
-						// Map card slots 1-15 to inventory equipSlot values 100-115
-						var cardEquipSlot = (byte)(100 + cardKVP.Key - 1);
-						batchLinks.AddRow(new Dictionary<string, object> {
-							{"characterId", character.DbId},
-							{"itemId", card.DbId},
-							{"sort", 0},
-							{"equipSlot", cardEquipSlot}
-						});
-					}
-
-					if (batchLinks.HasRows)
-						batchLinks.Execute();
+					cmd.Parameters.AddWithValue("@characterId", character.DbId);
+					for (int k = 0; k < itemsToUnlink.Count; k++) cmd.Parameters.AddWithValue(unlinkParams[k], itemsToUnlink[k]);
+					cmd.ExecuteNonQuery();
 				}
+				// NOTE: We do NOT delete from the `items` table here. The item might have been traded
+				// to another player. Orphan cleanup should be a separate maintenance task.
+			}
+
+			// B) Find items to LINK/UPDATE: They are in memory.
+			using (var batchLinks = new BatchInsertCommand("inventory",
+				"ON DUPLICATE KEY UPDATE `sort` = VALUES(`sort`), `equipSlot` = VALUES(`equipSlot`)",
+				conn, trans))
+			{
+				var i = 0;
+				// Add non-equipped items
+				foreach (var itemKV in character.Inventory.GetItems().OrderBy(a => a.Key))
+				{
+					var item = itemKV.Value;
+					// Skip items that weren't persisted (filtered out or null)
+					if (item == null || !currentValidItemDbIds.Contains(item.DbId))
+						continue;
+
+					batchLinks.AddRow(new Dictionary<string, object> {
+						{"characterId", character.DbId},
+						{"itemId", item.DbId},
+						{"sort", i++},
+						{"equipSlot", 0x7F}
+					});
+				}
+
+				// Add equipped items
+				foreach (var equipKVP in character.Inventory.GetEquip())
+				{
+					var item = equipKVP.Value;
+					// Skip items that weren't persisted (filtered out, DummyEquipItem, or default equip)
+					if (item == null || !currentValidItemDbIds.Contains(item.DbId))
+						continue;
+
+					batchLinks.AddRow(new Dictionary<string, object> {
+						{"characterId", character.DbId},
+						{"itemId", item.DbId},
+						{"sort", 0},
+						{"equipSlot", (byte)equipKVP.Key}
+					});
+				}
+
+				// Add equipped cards (using slots 100-115 for card slots 1-15)
+				// Note: Using 100-115 to fit within TINYINT range (max 127)
+				foreach (var cardKVP in character.Inventory.GetCards())
+				{
+					var card = cardKVP.Value;
+					// Skip cards that weren't persisted (filtered out or null)
+					if (card == null || !currentValidItemDbIds.Contains(card.DbId))
+						continue;
+
+					// Map card slots 1-15 to inventory equipSlot values 100-115
+					var cardEquipSlot = (byte)(100 + cardKVP.Key - 1);
+					batchLinks.AddRow(new Dictionary<string, object> {
+						{"characterId", character.DbId},
+						{"itemId", card.DbId},
+						{"sort", 0},
+						{"equipSlot", cardEquipSlot}
+					});
+				}
+
+				if (batchLinks.HasRows)
+					batchLinks.Execute();
 			}
 		}
 
@@ -263,7 +261,7 @@ namespace Melia.Zone.Database
 						continue;
 					}
 
-					using (var cmd = new InsertCommand($"INSERT INTO `{tableName}` {{0}}", conn, trans))
+					using (var cmd = new InsertCommand($"INSERT INTO `{tableName}` {{parameters}}", conn, trans))
 					{
 						cmd.Set("name", varKey);
 						cmd.Set("type", type);
@@ -384,9 +382,7 @@ namespace Melia.Zone.Database
 		{
 			if (!items.Any()) return;
 
-			using (Debug.Profile($"PersistItemBatch ({items.Count})", 100))
-			{
-				// Step 1: Insert NEW items (DbId == 0) to get their IDs.
+			// Step 1: Insert NEW items (DbId == 0) to get their IDs.
 				// This is done one-by-one to reliably get the last inserted ID.
 				var newItems = items.Where(i => i.DbId == 0).ToList();
 				if (newItems.Any())
@@ -395,10 +391,11 @@ namespace Melia.Zone.Database
 					{
 						try
 						{
-							using (var cmd = new InsertCommand("INSERT INTO `items` {0}", conn, trans))
+							using (var cmd = new InsertCommand("INSERT INTO `items` {parameters}", conn, trans))
 							{
 								cmd.Set("itemId", item.Id);
 								cmd.Set("amount", item.Amount);
+								cmd.Set("locked", item.IsLocked);
 								cmd.Execute();
 								item.DbId = cmd.LastId; // Assign the correct ID immediately.
 
@@ -426,7 +423,7 @@ namespace Melia.Zone.Database
 					try
 					{
 						using (var batch = new BatchInsertCommand("items",
-							"ON DUPLICATE KEY UPDATE `itemId` = VALUES(`itemId`), `amount` = VALUES(`amount`)",
+							"ON DUPLICATE KEY UPDATE `itemId` = VALUES(`itemId`), `amount` = VALUES(`amount`), `locked` = VALUES(`locked`)",
 							conn, trans))
 						{
 							foreach (var item in existingItems)
@@ -435,7 +432,8 @@ namespace Melia.Zone.Database
 								{
 									{ "itemUniqueId", item.DbId },
 									{ "itemId", item.Id },
-									{ "amount", item.Amount }
+									{ "amount", item.Amount },
+									{ "locked", item.IsLocked }
 								});
 							}
 
@@ -450,13 +448,12 @@ namespace Melia.Zone.Database
 					}
 				}
 
-				// Final validation: ensure ALL items now have valid DbIds
-				var itemsStillWithoutIds = items.Where(i => i.DbId <= 0).ToList();
-				if (itemsStillWithoutIds.Any())
-				{
-					var itemInfo = string.Join(", ", itemsStillWithoutIds.Select(i => $"ItemId:{i.Id}"));
-					throw new InvalidOperationException($"After PersistItemBatch, these items still have invalid DbIds: {itemInfo}");
-				}
+			// Final validation: ensure ALL items now have valid DbIds
+			var itemsStillWithoutIds = items.Where(i => i.DbId <= 0).ToList();
+			if (itemsStillWithoutIds.Any())
+			{
+				var itemInfo = string.Join(", ", itemsStillWithoutIds.Select(i => $"ItemId:{i.Id}"));
+				throw new InvalidOperationException($"After PersistItemBatch, these items still have invalid DbIds: {itemInfo}");
 			}
 		}
 		internal void InternalSaveProperties(string databaseName, string idName, List<Item> items, MySqlConnection conn, MySqlTransaction trans)
@@ -932,7 +929,7 @@ namespace Melia.Zone.Database
 			foreach (var buff in savableBuffs)
 			{
 				long buffDbId = 0;
-				using (var cmd = new InsertCommand("INSERT INTO `buffs` {0}", conn, trans))
+				using (var cmd = new InsertCommand("INSERT INTO `buffs` {parameters}", conn, trans))
 				{
 					cmd.Set("characterId", character.DbId);
 					cmd.Set("classId", buff.Id);
@@ -1477,6 +1474,106 @@ namespace Melia.Zone.Database
 
 				if (itemsBatch.HasRows)
 					itemsBatch.Execute();
+			}
+		}
+
+		/// <summary>
+		/// INTERNAL USE: Saves account fields within an existing transaction.
+		/// </summary>
+		internal void InternalSaveAccountFields(Account account, MySqlConnection conn, MySqlTransaction trans)
+		{
+			using (var cmd = new UpdateCommand("UPDATE `accounts` SET {parameters} WHERE `accountId` = @accountId", conn, trans))
+			{
+				cmd.AddParameter("@accountId", account.Id);
+				cmd.Set("settings", account.Settings.ToString());
+				cmd.Set("premiumTokenExpiration", account.Premium.Token.Expiration);
+				cmd.Set("medals", account.Medals);
+				cmd.Set("giftMedals", account.GiftMedals);
+				cmd.Set("premiumMedals", account.PremiumMedals);
+				cmd.Set("language", account.Language);
+				cmd.Execute();
+			}
+		}
+
+		/// <summary>
+		/// INTERNAL USE: Saves chat macros within an existing transaction.
+		/// </summary>
+		internal void InternalSaveChatMacros(Account account, MySqlConnection conn, MySqlTransaction trans)
+		{
+			var macros = account.GetChatMacros().ToList();
+
+			if (!macros.Any())
+			{
+				using (var mc = new MySqlCommand("DELETE FROM `chatmacros` WHERE `accountId` = @accountId", conn, trans))
+				{
+					mc.Parameters.AddWithValue("@accountId", account.Id);
+					mc.ExecuteNonQuery();
+				}
+				return;
+			}
+
+			var macroIndicesInMemory = new HashSet<int>(macros.Select(m => m.Index));
+
+			foreach (var macro in macros)
+			{
+				using (var cmd = new MySqlCommand(
+					"INSERT INTO `chatmacros` (`accountId`, `index`, `message`, `pose`) VALUES (@accountId, @index, @message, @pose) " +
+					"ON DUPLICATE KEY UPDATE `message` = VALUES(`message`), `pose` = VALUES(`pose`)", conn, trans))
+				{
+					cmd.Parameters.AddWithValue("@accountId", account.Id);
+					cmd.Parameters.AddWithValue("@index", macro.Index);
+					cmd.Parameters.AddWithValue("@message", macro.Message);
+					cmd.Parameters.AddWithValue("@pose", macro.Pose);
+					cmd.ExecuteNonQuery();
+				}
+			}
+
+			var macroIndicesInDb = new HashSet<int>();
+			using (var cmd = new MySqlCommand("SELECT `index` FROM `chatmacros` WHERE `accountId` = @accountId", conn, trans))
+			{
+				cmd.Parameters.AddWithValue("@accountId", account.Id);
+				using (var reader = cmd.ExecuteReader())
+				{
+					while (reader.Read())
+						macroIndicesInDb.Add(reader.GetInt32(0));
+				}
+			}
+
+			var indicesToDelete = macroIndicesInDb.Except(macroIndicesInMemory).ToList();
+			if (indicesToDelete.Any())
+			{
+				var deleteParams = indicesToDelete.Select((idx, i) => $"@idx{i}").ToArray();
+				using (var cmd = new MySqlCommand($"DELETE FROM `chatmacros` WHERE `accountId` = @accountId AND `index` IN ({string.Join(",", deleteParams)})", conn, trans))
+				{
+					cmd.Parameters.AddWithValue("@accountId", account.Id);
+					for (var i = 0; i < indicesToDelete.Count; i++)
+						cmd.Parameters.AddWithValue(deleteParams[i], indicesToDelete[i]);
+					cmd.ExecuteNonQuery();
+				}
+			}
+		}
+
+		/// <summary>
+		/// INTERNAL USE: Saves revealed maps within an existing transaction.
+		/// </summary>
+		internal void InternalSaveRevealedMaps(Account account, MySqlConnection conn, MySqlTransaction trans)
+		{
+			using (var mc = new MySqlCommand("DELETE FROM `revealedmaps` WHERE `accountId` = @accountId", conn, trans))
+			{
+				mc.Parameters.AddWithValue("@accountId", account.Id);
+				mc.ExecuteNonQuery();
+			}
+
+			foreach (var revealedMap in account.GetRevealedMaps())
+			{
+				using (var cmd = new InsertCommand("INSERT INTO `revealedmaps` {parameters}", conn, trans))
+				{
+					cmd.Set("accountId", account.Id);
+					cmd.Set("map", revealedMap.MapId);
+					cmd.Set("explored", revealedMap.Explored);
+					cmd.Set("percentage", revealedMap.Percentage);
+					cmd.Execute();
+				}
 			}
 		}
 

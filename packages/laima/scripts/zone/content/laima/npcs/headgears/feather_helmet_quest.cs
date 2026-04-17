@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.Dialogues;
 using Melia.Zone.World.Actors.Characters;
@@ -24,6 +24,7 @@ public class FeatherHelmetQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -62,10 +63,6 @@ public class FeatherHelmetQuestScript : QuestScript
 					player.Inventory.HasItem(CronewtLeatherId, 25) &&
 					player.Inventory.HasItem(KepoFluffId, 60))
 				{
-					player.Inventory.RemoveItem(EllomBellId, 40);
-					player.Inventory.RemoveItem(CronewtLeatherId, 25);
-					player.Inventory.RemoveItem(KepoFluffId, 60);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("*expertly crafts the helmet* Ah, this brings back memories! The bells will ring with each victory, the leather will protect you, and the fluff... well, you'll be the most comfortable warrior on the battlefield!"));
 
@@ -99,5 +96,12 @@ public class FeatherHelmetQuestScript : QuestScript
 		{
 			await dialog.Msg(L("*nods understandingly* A warrior must choose their own path. Return if you wish to learn more about the old ways."));
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(EllomBellId, 40);
+		character.Inventory.RemoveItem(CronewtLeatherId, 25);
+		character.Inventory.RemoveItem(KepoFluffId, 60);
 	}
 }

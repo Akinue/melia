@@ -47,20 +47,30 @@ namespace Melia.Zone.World.Actors.Characters
 		#region Private Fields
 		private const int MaxMonsterAppearPerTick = 8;
 
+		private int _cleanedUp;
 		private int _destinationChannelId;
 		private readonly object _warpLock = new();
 		private readonly object _lookAroundLock = new();
 		private readonly object _hpLock = new();
-		private IMonster[] _visibleMonsters = [];
-		private Character[] _visibleCharacters = [];
-		private Pad[] _visiblePads = [];
+		private readonly HashSet<IMonster> _visibleMonsters = new();
+		private readonly HashSet<Character> _visibleCharacters = new();
+		private readonly HashSet<Pad> _visiblePads = new();
+
+		// Reusable scratch collections for LookAround diffing (zero-alloc per tick)
+		private readonly HashSet<IMonster> _currentVisMonsters = new();
+		private readonly HashSet<Character> _currentVisChars = new();
+		private readonly HashSet<Pad> _currentVisPads = new();
+		private readonly List<IMonster> _tempAppearMonsters = new();
+		private readonly List<IMonster> _tempDisappearMonsters = new();
+		private readonly List<Character> _tempAppearChars = new();
+		private readonly List<Character> _tempDisappearChars = new();
+		private readonly List<Pad> _tempAppearPads = new();
+		private readonly List<Pad> _tempDisappearPads = new();
 		private readonly HashSet<Pad> _observedPads = [];
 		private readonly static TimeSpan ResurrectDialogDelay = TimeSpan.FromSeconds(2);
 		private TimeSpan _resurrectDialogTimer = ResurrectDialogDelay;
 		private Localizer _localizer;
 		private Companion _companionToReactivate;
-		private DateTime _pendingCompanionActivation = DateTime.MinValue;
-		private readonly static TimeSpan CompanionActivationDelay = TimeSpan.FromSeconds(2);
 		#endregion
 
 		#region Core Properties
@@ -484,11 +494,6 @@ namespace Melia.Zone.World.Actors.Characters
 		public event Action<Character> SitStatusChanged;
 
 		/// <summary>
-		/// Raised when the characters stats change.
-		/// </summary>
-		public event Action<Character> StatChanged;
-
-		/// <summary>
 		/// Raised when the character dies.
 		/// </summary>
 		public Action<Character, ICombatEntity> Died { get; set; }
@@ -605,22 +610,14 @@ namespace Melia.Zone.World.Actors.Characters
 		{
 			this.Components.Update(elapsed);
 			this.UpdateResurrection(elapsed);
-			this.UpdatePendingCompanion();
 		}
 
 		/// <summary>
-		/// Activates pending companion after scripts have had time to set layer.
+		/// Activates companions that should be on the current map.
+		/// Called from CZ_LOAD_COMPLETE when the client has finished loading.
 		/// </summary>
-		private void UpdatePendingCompanion()
+		public void ActivateCompanions()
 		{
-			if (_pendingCompanionActivation == DateTime.MinValue)
-				return;
-
-			if (DateTime.Now < _pendingCompanionActivation)
-				return;
-
-			_pendingCompanionActivation = DateTime.MinValue;
-
 			if (!this.HasCompanions)
 				return;
 
@@ -629,14 +626,6 @@ namespace Melia.Zone.World.Actors.Characters
 				if (companion.IsActivated && companion.Map != this.Map)
 					companion.SetCompanionState(true);
 			}
-		}
-
-		/// <summary>
-		/// Schedules companion activation after a delay.
-		/// </summary>
-		public void ScheduleCompanionActivation()
-		{
-			_pendingCompanionActivation = DateTime.Now + CompanionActivationDelay;
 		}
 
 		/// <summary>
@@ -727,6 +716,7 @@ namespace Melia.Zone.World.Actors.Characters
 
 			dummyCharacter.Position = position;
 			dummyCharacter.Direction = this.Direction;
+			dummyCharacter.VisibleEquip = this.VisibleEquip;
 
 			foreach (var item in this.Inventory.GetEquip())
 			{
@@ -798,6 +788,38 @@ namespace Melia.Zone.World.Actors.Characters
 		{
 			foreach (var buffId in OobeBuffIds)
 				this.StopBuff(buffId);
+		}
+		#endregion
+
+		#region Cleanup
+		/// <summary>
+		/// Releases internal collections and breaks reference cycles so
+		/// the GC can collect this character's object graph promptly.
+		/// Called from the SaveQueue after the final save completes.
+		/// Safe to call more than once.
+		/// </summary>
+		public void Cleanup()
+		{
+			if (Interlocked.Exchange(ref _cleanedUp, 1) == 1)
+				return;
+
+			_visibleMonsters.Clear();
+			_visibleCharacters.Clear();
+			_visiblePads.Clear();
+			_observedPads.Clear();
+
+			// Clear major component collections
+			this.Inventory?.ReleaseAll();
+			this.Skills?.Clear();
+			this.Buffs?.Clear();
+			this.Jobs?.Clear();
+			this.Quests?.Clear();
+			this.Abilities?.Clear();
+			this.Collections?.Clear();
+
+			// Null out delegate properties to release any captured closures
+			this.Died = null;
+			this.Damaged = null;
 		}
 		#endregion
 

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
@@ -27,8 +28,6 @@ namespace Melia.Zone.Scripting.AI
 {
 	public abstract partial class AiScript
 	{
-		private readonly Random _rnd = new(RandomProvider.GetSeed());
-
 		protected Position GetRetreatPosition(ICombatEntity target, float idealRange)
 		{
 			// Get direction vector from target to self
@@ -78,7 +77,7 @@ namespace Melia.Zone.Scripting.AI
 
 			for (var i = 0; i < 10; ++i)
 			{
-				destination = this.Entity.Position.GetRandomInRange2D(radius, _rnd);
+				destination = this.Entity.Position.GetRandomInRange2D(radius, RandomProvider.Get());
 
 				// Give entities a random chance to move past their wander
 				// limit, that decreases with distance, to add some
@@ -94,7 +93,7 @@ namespace Melia.Zone.Scripting.AI
 					{
 						var chance = Math.Clamp(1 - (distance - wanderRange) / (wanderRange * extraRangeRate), 0, 1);
 
-						if (_rnd.NextDouble() > chance)
+						if (RandomProvider.Get().NextDouble() > chance)
 							continue;
 					}
 				}
@@ -213,6 +212,136 @@ namespace Melia.Zone.Scripting.AI
 			// The loop terminated because the entity or target died, or target warped.
 			// Ensure we stop moving.
 			yield return this.StopMove();
+		}
+
+		/// <summary>
+		/// Estimates where the target will be <paramref name="leadSec"/>
+		/// seconds from now using the rolling two-stage motion samples.
+		/// Returns the target's current position when the samples are
+		/// missing, stale, or incoherent. Prediction is confidence-weighted
+		/// by straightness (dirA · dirB): straight lines extrapolate fully,
+		/// sharp turns collapse lead toward 0 so the mob doesn't commit
+		/// on a juke.
+		/// </summary>
+		protected Position PredictTargetPosition(float leadSec)
+		{
+			if (_target == null) return Position.Zero;
+			if (_targetSampleMidTime == default) return _target.Position;
+
+			var now = DateTime.UtcNow;
+			var newHalfSec = (float)(now - _targetSampleMidTime).TotalSeconds;
+			if (newHalfSec < 0.05f) return _target.Position;
+
+			var newHalfDist = (float)_targetSampleMidPos.Get2DDistance(_target.Position);
+			if (newHalfDist < 0.5f) return _target.Position;
+
+			var dirB = (_target.Position - _targetSampleMidPos).Normalize2D();
+			if (dirB.X == 0 && dirB.Z == 0) return _target.Position;
+
+			var speed = newHalfDist / newHalfSec;
+			var targetMaxSpeed = _target.Properties.GetFloat(PropertyName.MSPD);
+			if (targetMaxSpeed > 0f && speed > targetMaxSpeed) speed = targetMaxSpeed;
+
+			var straightness = 0.5f;
+			if (_targetSampleOldTime != default)
+			{
+				var oldHalfDist = (float)_targetSampleOldPos.Get2DDistance(_targetSampleMidPos);
+				if (oldHalfDist >= 0.5f)
+				{
+					var dirA = (_targetSampleMidPos - _targetSampleOldPos).Normalize2D();
+					if (!(dirA.X == 0 && dirA.Z == 0))
+					{
+						var dot = dirA.X * dirB.X + dirA.Z * dirB.Z;
+						straightness = Math.Max(0f, dot);
+					}
+				}
+			}
+
+			return _target.Position + dirB * (speed * leadSec * straightness);
+		}
+
+		/// <summary>
+		/// Solves for a lunge destination that places the mob at MaxR/2
+		/// from the target's *predicted* position at arrival time, then
+		/// walks there. Travel time and shoot time compound (mob can't
+		/// move while casting), so we iterate a couple of times on
+		/// leadSec = travelSec + shootSec until the ideal spot converges.
+		/// Arrival lines up with the start of the cast so the hit lands
+		/// centered on the target when the skill resolves.
+		/// </summary>
+		protected IEnumerable PreCastLunge(Skill skill, float maxAttackRange)
+		{
+			if (_target == null || skill == null) yield break;
+			if (this.RangeType != AttackerRangeType.Melee) yield break;
+			if (!this.Entity.CanMove() || this.Entity.IsLocked(LockType.Movement)) yield break;
+
+			var mobPos = this.Entity.Position;
+			var mobSpeed = this.Entity.Properties.GetFloat(PropertyName.MSPD);
+			if (mobSpeed <= 0f) yield break;
+
+			var shootSec = (float)skill.Properties.ShootTime.TotalSeconds;
+			var idealDistance = maxAttackRange * 0.5f;
+
+			var leadSec = shootSec;
+			Position idealMobPos = mobPos;
+
+			for (var iter = 0; iter < 3; iter++)
+			{
+				var predictedPos = this.PredictTargetPosition(leadSec);
+
+				// Offset from predicted target toward the mob's current
+				// position, placed at MaxR/2 — that's where we want to
+				// stand when the cast resolves.
+				var away = (mobPos - predictedPos).Normalize2D();
+				if (away.X == 0 && away.Z == 0)
+				{
+					// Mob is exactly on top of the prediction; fall back
+					// to the mob's current facing so we don't freeze.
+					var fallback = (_target.Position - mobPos).Normalize2D();
+					if (fallback.X == 0 && fallback.Z == 0) yield break;
+					away = new Position(-fallback.X, 0, -fallback.Z);
+				}
+
+				idealMobPos = predictedPos + away * idealDistance;
+
+				// Cap how far the mob will commit per lunge so a sprinting
+				// target can't drag the AI across the map.
+				var toIdeal = idealMobPos - mobPos;
+				var commitDist = (float)mobPos.Get2DDistance(idealMobPos);
+				if (commitDist > this.MaxLungeDistance)
+				{
+					var dir = toIdeal.Normalize2D();
+					idealMobPos = mobPos + dir * this.MaxLungeDistance;
+					commitDist = this.MaxLungeDistance;
+				}
+
+				var newLead = (commitDist / mobSpeed) + shootSec;
+
+				// Converged? Bail out early to save a sample.
+				if (Math.Abs(newLead - leadSec) < 0.02f)
+				{
+					leadSec = newLead;
+					break;
+				}
+				leadSec = newLead;
+			}
+
+			if (!this.Entity.Map.Ground.TryGetNearestValidPosition(idealMobPos, this.Entity.AgentRadius, out var validDest, 50f))
+				yield break;
+
+			// Start the move and poll actual arrival instead of sleeping
+			// for the pathfinder's estimated duration — the estimate often
+			// overshoots real arrival time (ground snap, coroutine tick
+			// granularity), which shows up in-game as the mob freezing at
+			// the lunge spot before finally casting. The estimate is kept
+			// as a safety cap (+200ms) so a stuck movement can't stall the
+			// routine forever.
+			var estimatedTime = _movement?.MoveTo(validDest) ?? TimeSpan.Zero;
+			if (estimatedTime <= TimeSpan.Zero) yield break;
+
+			var deadline = DateTime.UtcNow + estimatedTime + TimeSpan.FromMilliseconds(200);
+			while (_movement != null && _movement.IsMoving && DateTime.UtcNow < deadline)
+				yield return true;
 		}
 
 		/// <summary>
@@ -356,8 +485,11 @@ namespace Melia.Zone.Scripting.AI
 				return false;
 			}
 
-			var possibleSkills = mob.Data.Skills.Where(a => !this.Entity.IsOnCooldown(a.SkillId)).Select(a => a.SkillId);
-			if (!possibleSkills.Any())
+			var possibleSkills = new List<SkillId>();
+			foreach (var a in mob.Data.Skills)
+				if (!this.Entity.IsOnCooldown(a.SkillId))
+					possibleSkills.Add(a.SkillId);
+			if (possibleSkills.Count == 0)
 				return false;
 			var rndSkillId = possibleSkills.Random();
 
@@ -379,73 +511,66 @@ namespace Melia.Zone.Scripting.AI
 		/// </summary>
 		protected virtual IEnumerable UseSkill(Skill skill, ICombatEntity target, TimeSpan delay = default)
 		{
-			using (Debug.Profile($"AiRoutine.UseSkill('{skill.Id}') on '{this.Entity.Name}'", 5000))
+			// Track when we start using a skill for fear behavior timing
+			_lastSkillUseTime = DateTime.UtcNow;
+			// Track the skill's duration to prevent interruption during animation
+			_lastSkillDuration = (delay == default) ? skill.Properties.ShootTime : delay;
+
+			yield return this.StopMove();
+
+			if (!this.CanUseSkill(skill, target))
 			{
-				// Track when we start using a skill for fear behavior timing
-				_lastSkillUseTime = DateTime.UtcNow;
-				// Track the skill's duration to prevent interruption during animation
-				_lastSkillDuration = (delay == default) ? skill.Properties.ShootTime : delay;
+				Send.ZC_SKILL_DISABLE(this.Entity);
+				yield break;
+			}
 
-				yield return this.StopMove();
+			if (!(this.Entity is Mob mob && !mob.Data.CanRotate))
+				this.Entity.TurnTowards(target);
 
-				if (!this.CanUseSkill(skill, target))
+			var skillId = skill.Id;
+			if (Versions.Client == KnownVersions.ClosedBeta1)
+				skillId += 100000;
+
+			var skillUsedSuccessfully = false;
+
+			// Standard monster skill handling
+			if (!ZoneServer.Instance.SkillHandlers.TryGetHandler<ITargetSkillHandler>(skillId, out var handler))
+			{
+				Log.Warning($"AiScript: No handler found for skill '{skillId}'.");
+			}
+			else
+			{
+				if (this.Entity.Components.TryGet<BaseSkillComponent>(out var skillComponent))
+					skillComponent.UseSkill(skill.Id);
+
+				handler.Handle(skill, this.Entity, target);
+			}
+			skillUsedSuccessfully = true;
+
+			if (skillUsedSuccessfully)
+			{
+				// Record skill history for condition checks
+				_lastUsedSkill = skill.Id;
+				_usedSkillHistory.Insert(0, skill.Id);
+				if (_usedSkillHistory.Count > 10) // Limit history size
 				{
-					Send.ZC_SKILL_DISABLE(this.Entity);
-					yield break;
+					_usedSkillHistory.RemoveAt(_usedSkillHistory.Count - 1);
 				}
+			}
 
-				if (!(this.Entity is Mob mob && !mob.Data.CanRotate))
-					this.Entity.TurnTowards(target);
-
-				var skillId = skill.Id;
-				if (Versions.Client == KnownVersions.ClosedBeta1)
-					skillId += 100000;
-
-				var skillUsedSuccessfully = false;
-
-				// The 'active work' part of the skill execution.
-				using (Debug.Profile($"AiRoutine.UseSkill.ActiveWork: {skill.Id}", 100))
+			// --- Perform the intentional wait ---
+			// Wait while casting, but break early if interrupted
+			var useTime = (delay == default) ? skill.Properties.ShootTime : delay;
+			if (useTime > TimeSpan.Zero)
+			{
+				var waitEnd = DateTime.Now + useTime;
+				while (DateTime.Now < waitEnd)
 				{
-					// Standard monster skill handling
-					if (!ZoneServer.Instance.SkillHandlers.TryGetHandler<ITargetSkillHandler>(skillId, out var handler))
-					{
-						Log.Warning($"AiScript: No handler found for skill '{skillId}'.");
-					}
-					else
-					{
-						if (this.Entity.Components.TryGet<BaseSkillComponent>(out var skillComponent))
-							skillComponent.UseSkill(skill.Id);
+					// If the cast was interrupted, stop waiting immediately
+					if (skill.Vars.GetBool("Melia.MonsterCastInterrupted"))
+						break;
 
-						handler.Handle(skill, this.Entity, target);
-					}
-					skillUsedSuccessfully = true;
-				}
-
-				if (skillUsedSuccessfully)
-				{
-					// Record skill history for condition checks
-					_lastUsedSkill = skill.Id;
-					_usedSkillHistory.Insert(0, skill.Id);
-					if (_usedSkillHistory.Count > 10) // Limit history size
-					{
-						_usedSkillHistory.RemoveAt(_usedSkillHistory.Count - 1);
-					}
-				}
-
-				// --- Perform the intentional wait ---
-				// Wait while casting, but break early if interrupted
-				var useTime = (delay == default) ? skill.Properties.ShootTime : delay;
-				if (useTime > TimeSpan.Zero)
-				{
-					var waitEnd = DateTime.Now + useTime;
-					while (DateTime.Now < waitEnd)
-					{
-						// If the cast was interrupted, stop waiting immediately
-						if (skill.Vars.GetBool("Melia.MonsterCastInterrupted"))
-							break;
-
-						yield return this.Wait(TimeSpan.FromMilliseconds(100));
-					}
+					yield return this.Wait(TimeSpan.FromMilliseconds(100));
 				}
 			}
 		}
@@ -578,7 +703,7 @@ namespace Melia.Zone.Scripting.AI
 				{
 					// Option A: Teleport to target
 					movement?.Stop();
-					this.Entity.Position = followTarget.Position.GetRandomInRange2D((int)minDistance / 2, _rnd); // Teleport nearby, not directly on top
+					this.Entity.Position = followTarget.Position.GetRandomInRange2D((int)minDistance / 2, RandomProvider.Get()); // Teleport nearby, not directly on top
 					Send.ZC_SET_POS(this.Entity);
 					yield return this.Wait(250); // Small delay after teleport to re-orient.
 					continue; // Continue the loop from the new position

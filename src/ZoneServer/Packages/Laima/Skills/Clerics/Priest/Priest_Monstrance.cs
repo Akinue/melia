@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Melia.Shared.Packages;
@@ -8,6 +8,7 @@ using Melia.Shared.World;
 using Melia.Zone.Network;
 using Melia.Zone.Skills.Handlers.Base;
 using Melia.Zone.Skills.SplashAreas;
+using Melia.Zone.Scripting;
 using Melia.Zone.World.Actors;
 
 namespace Melia.Zone.Skills.Handlers.Priest
@@ -17,7 +18,7 @@ namespace Melia.Zone.Skills.Handlers.Priest
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Priest_Monstrance)]
-	public class Priest_MonstranceOverride : IMeleeGroundSkillHandler, IDynamicCasted
+	public class Priest_MonstranceOverride : IGroundSkillHandler, IDynamicCasted
 	{
 		private const int DebuffRadius = 150;
 		private const int DebuffDurationMilliseconds = 20000;
@@ -25,9 +26,7 @@ namespace Melia.Zone.Skills.Handlers.Priest
 		private const int TargetCountPerLevel = 1;
 		private const float BaseDamageRate = 0.2f;
 		private const float DamageRatePerLevel = 0.01f;
-		private const float AbilityBonus = 0.005f;
-
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -77,12 +76,9 @@ namespace Melia.Zone.Skills.Handlers.Priest
 		private float CalculateDamageBonus(ICombatEntity caster, Skill skill)
 		{
 			var damageBonus = BaseDamageRate + (DamageRatePerLevel * skill.Level);
-			var byAbility = 1f;
 
-			if (caster.TryGetActiveAbilityLevel(AbilityId.Priest27, out var abilityLevel))
-				byAbility += abilityLevel * AbilityBonus;
-
-			return damageBonus * byAbility;
+			var SCR_Get_AbilityReinforceRate = ScriptableFunctions.Skill.Get("SCR_Get_AbilityReinforceRate");
+			return damageBonus * (1f + SCR_Get_AbilityReinforceRate(skill));
 		}
 	}
 }

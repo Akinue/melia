@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.Dialogues;
 using Melia.Zone.World.Actors.Characters;
@@ -23,6 +23,7 @@ public class PartyConeQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -59,9 +60,6 @@ public class PartyConeQuestScript : QuestScript
 				if (player.Inventory.HasItem(PonponBranch, 5) &&
 					player.Inventory.HasItem(LoktanunFeather, 45))
 				{
-					player.Inventory.RemoveItem(PonponBranch, 5);
-					player.Inventory.RemoveItem(LoktanunFeather, 45);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("*dances with joy* Wonderful! *crafts while humming* A twist here, a feather there... Ta-da! Your very own Party Cone! Now you're ready to celebrate anything and everything!"));
 
@@ -95,5 +93,11 @@ public class PartyConeQuestScript : QuestScript
 		{
 			await dialog.Msg(L("*spins around* That's okay! The party never ends here - come back when you're ready to join the fun!"));
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(PonponBranch, 5);
+		character.Inventory.RemoveItem(LoktanunFeather, 45);
 	}
 }

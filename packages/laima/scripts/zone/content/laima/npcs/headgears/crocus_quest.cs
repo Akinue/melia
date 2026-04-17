@@ -23,6 +23,7 @@ public class CrocusQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -60,9 +61,6 @@ public class CrocusQuestScript : QuestScript
 				if (player.Inventory.HasItem(MantiwoodSkinId, 50) &&
 					player.Inventory.HasItem(PineMushroomId, 75))
 				{
-					player.Inventory.RemoveItem(MantiwoodSkinId, 50);
-					player.Inventory.RemoveItem(PineMushroomId, 75);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("{#666666}*carefully weaves the materials together with practiced hands*{/}"));
 					await dialog.Msg(L("The Mantiwood's resilient skin forms the base, and the pine mushrooms provide the essence that gives it life... There. A crocus that will never fade."));
@@ -98,5 +96,11 @@ public class CrocusQuestScript : QuestScript
 		{
 			await dialog.Msg(L("{#666666}*returns to tending the shrine*{/} The glen's beauty endures... for now. Return if you change your mind."));
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(MantiwoodSkinId, 50);
+		character.Inventory.RemoveItem(PineMushroomId, 75);
 	}
 }

@@ -129,6 +129,8 @@ namespace Melia.Zone.Scripting.Shared
 		/// <returns></returns>
 		public static async Task TREASUREBOX_LV(Dialog dialog, string className, int amount, string itemRequiredToUnlock = "")
 		{
+			if (dialog.Npc != null && dialog.Player.GetMapNPCState(dialog.Npc) == NpcState.Invisible)
+				return;
 			if (!string.IsNullOrEmpty(itemRequiredToUnlock) && dialog.Player.RemoveItem(itemRequiredToUnlock) > 0)
 				return;
 			await OpenChest(dialog.Player, dialog.Npc);
@@ -1146,49 +1148,43 @@ namespace Melia.Zone.Scripting.Shared
 		[DialogFunction]
 		public static async Task KLAPEDA_BLACKSMITH(Dialog dialog)
 		{
-			dialog.SetTitle("Zaras");
+			dialog.SetTitle(L("Zaras"));
 			dialog.SetPortrait("Dlg_port_vettel");
 
-			await BLACKSMITH_OPTIONS("Zaras, best Blacksmith in town! How may I help you?", dialog);
+			await BLACKSMITH_OPTIONS(L("Zaras, best Blacksmith in town! How may I help you?"), dialog);
 		}
 
 		[DialogFunction]
 		public static async Task ORSHA_BLACKSMITH(Dialog dialog)
 		{
-			dialog.SetTitle("Ilanai");
+			dialog.SetTitle(L("Ilanai"));
 			dialog.SetPortrait("Dlg_port_Illanai");
 
-			await BLACKSMITH_OPTIONS("Welcome to my humble shop~! How can I help you?", dialog);
+			await BLACKSMITH_OPTIONS(L("Welcome to my humble shop~! How can I help you?"), dialog);
 		}
 
 		[DialogFunction]
 		public static async Task FEDIMIAN_BLACKSMITH(Dialog dialog)
 		{
-			dialog.SetTitle("Anna");
+			dialog.SetTitle(L("Anna"));
 			dialog.SetPortrait("Dlg_port_Anna");
 
-			await BLACKSMITH_OPTIONS("Welcome, welcome! My services will surprise you!", dialog);
+			await BLACKSMITH_OPTIONS(L("Welcome, welcome! My services will surprise you!"), dialog);
 		}
 
 		private static async Task BLACKSMITH_OPTIONS(string greeting_message, Dialog dialog)
 		{
 			switch (await dialog.Select(greeting_message,
-				"Repair",
-				"Socket Management",
-				"Identify",
-				"Item Dismantle",
-				// "Transcend Item",
-				// "Item Dismantle",
-				// "Item Re-Identification",
-				// "Change Weapon Appearance",
-				"Cancel"))
+				L("Repair"),
+				L("Socket Management"),
+				L("Identify"),
+				L("Item Dismantle"),
+				// L("Change Weapon Appearance"),
+				L("Cancel")))
 			{
 				case 1:
 					dialog.OpenAddon(AddonMessage.OPEN_DLG_REPAIR);
 					break;
-				// case 2:
-				//  await dialog.OpenShop("Klapeda_Recipe");
-				//  break;
 				case 2:
 					dialog.OpenAddon(AddonMessage.DO_OPEN_MANAGE_GEM_UI);
 					break;
@@ -1198,18 +1194,9 @@ namespace Melia.Zone.Scripting.Shared
 				case 4:
 					dialog.OpenUI("itemdecompose");
 					break;
-					// case 5:
-					// 	await dialog.CustomDialog(CustomDialog.ITEM_TRANSCEND);
-					// 	break;
-					// case 6:
-					// 	await dialog.OpenUI("itemdecompose");
-					// 	break;
-					// case 7:
-					// 	await dialog.OpenUI("itemrandomreset");
-					// 	break;
-					// case 8:
-					// 	await dialog.OpenUI("briquetting");
-					// 	break;
+				// case 5:
+				// 	dialog.OpenUI("briquetting");
+				// 	break;
 			}
 		}
 

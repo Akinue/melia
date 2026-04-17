@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading.Tasks;
 using Melia.Shared.Packages;
 using Melia.Shared.Game.Const;
@@ -17,11 +17,11 @@ namespace Melia.Zone.Skills.Handlers.Hunter
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Hunter_Praise)]
-	public class Hunter_PraiseOverride : IMeleeGroundSkillHandler
+	public class Hunter_PraiseOverride : IGroundSkillHandler
 	{
 		private const int PraiseAtkBuffDurationSeconds = 10;
 
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TryGetActiveCompanion(out var companion))
 			{
@@ -50,7 +50,7 @@ namespace Melia.Zone.Skills.Handlers.Hunter
 			await skill.Wait(TimeSpan.FromMilliseconds(300));
 
 			// Apply Praise_Atk_Buff to companion (attack buff + bleeding on attack, 10 seconds)
-			companion.StartBuff(BuffId.Praise_Atk_Buff, skill.Level, 0f, TimeSpan.FromSeconds(PraiseAtkBuffDurationSeconds), caster);
+			companion.StartBuff(BuffId.Praise_Atk_Buff, skill.Level, 0f, TimeSpan.FromSeconds(PraiseAtkBuffDurationSeconds), caster, skill.Id);
 
 			// Hunter26 ability: grant temporary debuff immunity to companion
 			if (caster.IsAbilityActive(AbilityId.Hunter26))

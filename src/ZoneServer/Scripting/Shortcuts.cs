@@ -350,12 +350,12 @@ namespace Melia.Zone.Scripting
 			if (disappearOnOpen)
 				npc.DisappearTime = DateTime.Now.AddSeconds(3);
 
+			npc.SetState(NpcState.Invisible);
 			character.SetMapNPCState(npc, NpcState.Invisible);
 
-			// Make chest reappear after a certain amount of time
-			// TODO: Add timer component, to set up and associate timers
-			//   and intervals with entities.
-			_ = Task.Delay(TimeSpan.FromMinutes(1)).ContinueWith(_ => npc.SetState(NpcState.Normal));
+			// Make chest reappear after a certain amount of time for
+			// characters that haven't opened it yet.
+			_ = Task.Delay(TimeSpan.FromMinutes(1)).ContinueWith(_ => { if (npc?.Map != null) npc.SetState(NpcState.Normal); });
 		}
 
 		/// <summary>
@@ -407,6 +407,35 @@ namespace Melia.Zone.Scripting
 			foreach (var enemy in nearbyEnemies)
 			{
 				if (enemy is Mob mob && monsterIdSet.Contains(mob.Id) && !mob.IsDead)
+				{
+					mob.InsertHate(character, threatAmount);
+					luredCount++;
+				}
+			}
+
+			return luredCount;
+		}
+
+		/// <summary>
+		/// Lures all nearby enemies within the specified radius of a character.
+		/// Adds threat/hate to each enemy within the specified radius.
+		/// </summary>
+		/// <param name="character">The character to lure enemies towards</param>
+		/// <param name="radius">The radius to search for enemies</param>
+		/// <param name="threatAmount">Amount of threat/hate to add (default: 150)</param>
+		/// <returns>Number of enemies lured</returns>
+		public static int LureNearbyEnemies(Character character, float radius, int threatAmount = 150)
+		{
+			if (character?.Map == null)
+				return 0;
+
+			var luredCount = 0;
+
+			var nearbyEnemies = character.Map.GetAttackableEnemiesInPosition(character, character.Position, radius);
+
+			foreach (var enemy in nearbyEnemies)
+			{
+				if (enemy is Mob mob && !mob.IsDead)
 				{
 					mob.InsertHate(character, threatAmount);
 					luredCount++;

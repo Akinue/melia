@@ -6,6 +6,7 @@ using System.Linq;
 using System.Numerics;
 using System.Text;
 using System.Threading.Tasks;
+using Melia.Zone.Buffs.Handlers.Monster;
 using Melia.Shared.Data.Database;
 using Melia.Shared.Game.Const;
 using Melia.Shared.Game.Properties;
@@ -118,7 +119,9 @@ namespace Melia.Zone.Commands
 			this.Add("who", "", "Displays players online with names.", this.HandlePlayersOnline);
 			this.Add("w", "", "Displays player count.", this.HandlePlayerCount);
 			this.Add("uptime", "", "Displays the server uptime.", this.HandleUptime);
+			this.Add("mapinfo", "", "Displays entity counts on the current map.", this.HandleMapInfo);
 			this.Add("rates", "", "Displays the current server rates.", this.HandleRates);
+			this.Add("language", "<language>", "Sets the server-side language.", this.HandleLanguage);
 
 			// VIP
 			this.Add("autoloot", "", "Toggles autolooting.", this.HandleAutoloot);
@@ -132,9 +135,11 @@ namespace Melia.Zone.Commands
 			this.Add("identify", "", "Identifies all unidentified items in inventory.", this.HandleIdentify);
 			this.Add("appraise", "", "Identifies all unidentified items in inventory.", this.HandleIdentify);
 			this.Add("refine", "<slot> <amount>", "Refines equipment. Slot 0 = all equipped items.", this.HandleRefine);
+			this.Add("itemprop", "<objectid> <property> <value>", "Sets an item property by ObjectId. Example: /itemprop 12345 PR 4", this.HandleItemProp);
 			this.Add("silver", "<modifier>", "Spawns silver.", this.HandleSilver);
 			this.Add("droptest", "<item id|name> [count=1] [radius=50]", "Drops items on the ground for pickup testing.", this.HandleDropTest);
 			this.Add("spawn", "<monster id|class name> [amount=1] ['ai'=BasicMonster] ['tendency'=peaceful] ['hp'=amount]", "Spawns monster.", this.HandleSpawn);
+			this.Add("spawnbuff", "<monster id|class name> <buff class name> [duration=0] ['ai'=BasicMonster] ['tendency'=aggressive]", "Spawns monster with a buff.", this.HandleSpawnBuff);
 			this.Add("madhatter", "", "Spawns all headgears.", this.HandleGetAllHats);
 			this.Add("heartofcards", "", "Spawns all boss cards at level 10.", this.HandleGetAllBossCards);
 			this.Add("heartofgems", "", "Spawns all gems at level 10.", this.HandleGetAllGems);
@@ -177,6 +182,9 @@ namespace Melia.Zone.Commands
 			this.Add("killmonsters", "<handle>", "Official GM Command for killing all monster on the map.", this.HandleKillMonsters);
 			this.Add("items", "", "Spawns all the items.", this.HandleGetAllItems);
 			this.Add("dungeon", "<id>", "", this.HandleDungeonMatchMaking);
+			this.Add("equipset", "[set name] [grade=Legend] [refine=15]", "Gives equipment matching set name. No args = Savinose Dysnai.", this.HandleEquipSet);
+			this.Add("allabilities", "", "Learns all abilities for character's jobs at max level.", this.HandleMaxAbilities);
+			this.Add("allskills", "", "Learns all skills for character's jobs at max level.", this.HandleAllSkills);
 
 			// Dev
 			this.Add("test", "", "", this.HandleTest);
@@ -619,7 +627,7 @@ namespace Melia.Zone.Commands
 			if (args.Count >= 3 && !float.TryParse(args.Get(2), out time))
 				return CommandResult.Okay;
 
-			var packet = new Packet(Op.ZC_NORMAL);
+			using var packet = Packet.Rent(Op.ZC_NORMAL);
 
 			packet.PutSubOp(NormalOpType.Zone, subOpCode);
 			packet.PutInt(sender.Handle);
@@ -731,6 +739,16 @@ namespace Melia.Zone.Commands
 			else
 				sender.ServerMessage(Localization.Get("{2}'s reputation is {0} ({1})."), tier, ZoneServer.Instance.World.Factions.GetReputation(target, faction), target.TeamName);
 
+			return CommandResult.Okay;
+		}
+
+		/// <summary>
+		/// Displays entity counts on the current map.
+		/// </summary>
+		private CommandResult HandleMapInfo(Character sender, Character target, string message, string commandName, Arguments args)
+		{
+			var map = target.Map;
+			sender.ServerMessage(Localization.Get("Map: {0} ({1}) — {2} monsters, {3} characters"), map.ClassName, map.Id, map.MonsterCount, map.CharacterCount);
 			return CommandResult.Okay;
 		}
 
@@ -1461,7 +1479,7 @@ namespace Melia.Zone.Commands
 			var rnd = new Random(Environment.TickCount);
 			for (var i = 0; i < amount; ++i)
 			{
-				var monster = new Mob(monsterData.Id, RelationType.Enemy);
+				var monster = new Mob(monsterData.Id);
 
 				Position pos;
 				Direction dir;
@@ -1507,6 +1525,88 @@ namespace Melia.Zone.Commands
 			sender.ServerMessage(Localization.Get("Monsters were spawned."));
 			if (sender != target)
 				target.ServerMessage(Localization.Get("Monsters were spawned at your location by {0}."), sender.TeamName);
+
+			return CommandResult.Okay;
+		}
+
+		/// <summary>
+		/// Spawns a monster with a buff at target's location.
+		/// </summary>
+		private CommandResult HandleSpawnBuff(Character sender, Character target, string message, string command, Arguments args)
+		{
+			if (args.IndexedCount < 2)
+				return CommandResult.InvalidArgument;
+
+			MonsterData monsterData;
+			if (int.TryParse(args.Get(0), out var id))
+			{
+				monsterData = ZoneServer.Instance.Data.MonsterDb.Find(id);
+				if (monsterData == null)
+				{
+					sender.ServerMessage(Localization.Get("Monster not found by id."));
+					return CommandResult.Okay;
+				}
+			}
+			else
+			{
+				var searchName = args.Get(0).ToLower();
+				var monstersData = ZoneServer.Instance.Data.MonsterDb.Entries.Values.Where(a => a.ClassName.Contains(searchName, StringComparison.InvariantCultureIgnoreCase)).ToList();
+				if (monstersData.Count == 0)
+				{
+					sender.ServerMessage(Localization.Get("Monster not found by name."));
+					return CommandResult.Okay;
+				}
+
+				var sorted = monstersData.OrderBy(a => a.ClassName.ToLower().GetLevenshteinDistance(searchName));
+				monsterData = sorted.First();
+			}
+
+			var buffName = args.Get(1);
+			if (!Enum.TryParse<BuffId>(buffName, out var buffId))
+			{
+				sender.ServerMessage(Localization.Get("Buff '{0}' not found."), buffName);
+				return CommandResult.Okay;
+			}
+
+			var duration = TimeSpan.Zero;
+			if (args.IndexedCount >= 3 && int.TryParse(args.Get(2), out var durationSec))
+				duration = TimeSpan.FromSeconds(durationSec);
+
+			var aiName = "BasicMonster";
+			if (args.TryGet("ai", out var aiNameArg))
+			{
+				if (aiNameArg.ToLower() == "none")
+					aiName = null;
+				else
+					aiName = aiNameArg;
+			}
+
+			var tendency = TendencyType.Aggressive;
+			if (args.TryGet("tendency", out var tendencyArg) && tendencyArg.ToLower() == "peaceful")
+				tendency = TendencyType.Peaceful;
+
+			var monster = new Mob(monsterData.Id, RelationType.Enemy);
+
+			var pos = target.Position.GetRandomInRange2D(30, 50);
+			if (!target.Map.Ground.TryGetNearestValidPosition(pos, out var validPos))
+				validPos = target.Position;
+
+			monster.Position = validPos;
+			monster.Direction = target.Direction;
+			monster.SpawnPosition = monster.Position;
+			monster.Tendency = tendency;
+			monster.Components.Add(new MovementComponent(monster));
+
+			if (!string.IsNullOrWhiteSpace(aiName))
+				monster.Components.Add(new AiComponent(monster, aiName));
+
+			MythicBuffHelper.ApplyMythicStats(monster);
+
+			target.Map.AddMonster(monster);
+
+			monster.StartBuff(buffId, 0, 0, duration, monster);
+
+			sender.ServerMessage(Localization.Get("Spawned '{0}' with buff '{1}'."), monsterData.ClassName, buffId);
 
 			return CommandResult.Okay;
 		}
@@ -4464,7 +4564,7 @@ namespace Melia.Zone.Commands
 
 			// Create auto seller packet from arguments and have the
 			// channel handle it as if the client had sent it.
-			var packet = new Packet(Op.CZ_REGISTER_AUTOSELLER);
+			using var packet = Packet.Rent(Op.CZ_REGISTER_AUTOSELLER);
 			packet.PutShort(0);
 			packet.PutString(title, 64);
 			packet.PutInt(items.Count);
@@ -4574,7 +4674,7 @@ namespace Melia.Zone.Commands
 			sender.Connection.ShopCreated = shop;
 			Send.ZC_AUTOSELLER_LIST(sender.Connection, sender);
 			Send.ZC_NORMAL.Shop_Unknown11C(sender.Connection, "Squire", shop.Type);
-			Send.ZC_NORMAL.ShopAnimation(sender.Connection, sender, "Squire_Repair", 1, 1);
+			Send.ZC_NORMAL.ShopAnimation(sender, "Squire_Repair", 1, 1);
 			Send.ZC_AUTOSELLER_TITLE(sender);
 
 			Log.Debug("HandleSellShop: {0} opened sell shop '{1}' with {2} item(s)", sender.Name, title, shop.Products.Count);
@@ -4609,7 +4709,8 @@ namespace Melia.Zone.Commands
 			}
 
 			// Clean up companion and summons before entering autotrade
-			sender.ActiveCompanion?.Map?.RemoveMonster(sender.ActiveCompanion);
+			foreach (var companion in sender.Companions.GetList())
+				companion.Map?.RemoveMonster(companion);
 			sender.Summons.RemoveAllSummons();
 
 			// Remove from party before entering autotrade - autotrading characters cannot be in parties
@@ -4623,8 +4724,11 @@ namespace Melia.Zone.Commands
 
 			Log.Info($"Character '{sender.Name}' enabled autotrade mode at {sender.Position} on map '{sender.Map.ClassName}'.");
 
-			// Save character data to ensure database has correct MapId for reconnection
-			ZoneServer.Instance.Database.SaveCharacterData(sender);
+			// Save character and account data before entering autotrade.
+			// OnClosed skips CleanupCharacter for autotraders, so this
+			// is the last chance to persist account-scoped data (team
+			// storage, collections, etc.).
+			ZoneServer.Instance.Database.SavePlayerData(sender, sender.Connection.Account);
 
 			// Send player to barracks - OnClosed will keep character in world due to IsAutoTrading
 			sender.MsgBox(Localization.Get("Autotrade mode enabled. Your shop will remain open while you are offline."));
@@ -5782,6 +5886,44 @@ namespace Melia.Zone.Commands
 		}
 
 		/// <summary>
+		/// Sets a property on an item by its ObjectId.
+		/// </summary>
+		private CommandResult HandleItemProp(Character sender, Character target, string message, string command, Arguments args)
+		{
+			if (args.Count < 3)
+				return CommandResult.InvalidArgument;
+
+			if (!long.TryParse(args.Get(0), out var objectId))
+				return CommandResult.InvalidArgument;
+
+			var propertyName = args.Get(1);
+
+			if (!float.TryParse(args.Get(2), NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+				return CommandResult.InvalidArgument;
+
+			if (!target.Inventory.TryGetItemOrEquip(objectId, out var item))
+			{
+				sender.ServerMessage(Localization.Get("Item with ObjectId {0} not found."), objectId);
+				return CommandResult.Okay;
+			}
+
+			var oldValue = item.Properties.GetFloat(propertyName);
+			item.Properties.SetFloat(propertyName, value);
+
+			item.Properties.InvalidateAll();
+			Send.ZC_OBJECT_PROPERTY(target, item);
+
+			if (target.Inventory.GetEquip().Values.Any(a => a.ObjectId == objectId))
+			{
+				target.InvalidateProperties();
+			}
+
+			sender.ServerMessage(Localization.Get("Set {0} on '{1}' (ObjId:{2}): {3} -> {4}"), propertyName, item.Name, objectId, oldValue, value);
+
+			return CommandResult.Okay;
+		}
+
+		/// <summary>
 		/// Shows the contents of a cube/gacha item by dungeon name, group name, or item class name.
 		/// </summary>
 		private CommandResult HandleCubeInfo(Character sender, Character target, string message, string commandName, Arguments args)
@@ -6001,6 +6143,210 @@ namespace Melia.Zone.Commands
 			}
 
 			sender.ServerMessage(Localization.Get("No suitable monsters found."));
+
+			return CommandResult.Okay;
+		}
+
+		/// <summary>
+		/// Changes the target's account's language.
+		/// </summary>
+		/// <param name="sender"></param>
+		/// <param name="target"></param>
+		/// <param name="message"></param>
+		/// <param name="commandName"></param>
+		/// <param name="args"></param>
+		/// <returns></returns>
+		private CommandResult HandleLanguage(Character sender, Character target, string message, string commandName, Arguments args)
+		{
+			if (args.Count < 1)
+			{
+				sender.ServerMessage(Localization.Get("Current language: {0}"), target.Connection.Account.Language);
+				return CommandResult.Okay;
+			}
+
+			var language = args.Get(0);
+
+			target.Connection.Account.Language = args.Get(0);
+			target.Connection.SelectedLanguage = language;
+
+			sender.ServerMessage(Localization.Get("Changed language to '{0}'."), language);
+
+			return CommandResult.Okay;
+		}
+
+		/// <summary>
+		/// Gives a full equipment set to the target character.
+		/// Searches item DB by name (StartsWith match). No args = Savinose Dysnai.
+		/// </summary>
+		private CommandResult HandleEquipSet(Character sender, Character target, string message, string command, Arguments args)
+		{
+			var itemDb = ZoneServer.Instance.Data.ItemDb;
+			var grade = ItemGrade.Legend;
+			var refine = 15;
+
+			string[] setNames;
+
+			if (args.IndexedCount == 0)
+			{
+				setNames = new[] { "Raffye", "Blint" };
+
+				target.Inventory.Add(new Item(640003, 100), InventoryAddType.PickUp);
+				target.Inventory.Add(new Item(640006, 100), InventoryAddType.PickUp);
+				target.Inventory.Add(new Item(640009, 100), InventoryAddType.PickUp);
+			}
+			else
+			{
+				setNames = new[] { args.Get(0) };
+
+				if (args.IndexedCount >= 2)
+				{
+					if (!Enum.TryParse(args.Get(1), true, out grade))
+					{
+						sender.ServerMessage(Localization.Get("Invalid grade. Use: Normal/Magic/Rare/Unique/Legend/Goddess"));
+						return CommandResult.Okay;
+					}
+				}
+
+				if (args.IndexedCount >= 3)
+				{
+					if (!int.TryParse(args.Get(2), out refine) || refine < 0 || refine > 40)
+					{
+						sender.ServerMessage(Localization.Get("Invalid refine level. Use 0-40."));
+						return CommandResult.Okay;
+					}
+				}
+			}
+
+			var itemCount = 0;
+
+			foreach (var setName in setNames)
+			{
+				var matches = itemDb.FindAll(a =>
+					a.Name.StartsWith(setName + " ", StringComparison.OrdinalIgnoreCase)
+					&& !a.Name.Contains("Realization", StringComparison.OrdinalIgnoreCase)
+					&& a.Type == ItemType.Equip
+					&& a.Journal
+					&& (a.Group == ItemGroup.Weapon || a.Group == ItemGroup.SubWeapon || a.Group == ItemGroup.Armor)
+				);
+
+				foreach (var itemData in matches)
+				{
+					var item = new Item(itemData.Id, 1);
+
+					item.Properties.SetFloat(PropertyName.ItemGrade, (int)grade);
+
+					item.Properties.SetFloat(PropertyName.NeedRandomOption, 1);
+					item.GenerateGradeBasedRandomOptions();
+					item.Appraisal();
+
+					if (item.IsRefinable && refine > 0)
+						item.Properties.SetFloat(PropertyName.Reinforce_2, refine);
+
+					target.Inventory.Add(item, InventoryAddType.PickUp);
+					itemCount++;
+				}
+			}
+
+			if (itemCount == 0)
+			{
+				sender.ServerMessage(Localization.Get("No equipment found matching '{0}'."), string.Join(", ", setNames));
+				return CommandResult.Okay;
+			}
+
+			sender.ServerMessage(Localization.Get("Added {0} items ({1}, +{2}, identified)."), itemCount, grade, refine);
+			if (sender != target)
+				target.ServerMessage(Localization.Get("Received {0} items ({1}, +{2}, identified)."), itemCount, grade, refine);
+
+			return CommandResult.Okay;
+		}
+
+		/// <summary>
+		/// Sets all abilities of all character jobs to their max level.
+		/// </summary>
+		private CommandResult HandleMaxAbilities(Character sender, Character target, string message, string command, Arguments args)
+		{
+			var abilityTreeDb = ZoneServer.Instance.Data.AbilityTreeDb;
+			var jobs = target.Jobs.GetList();
+			var learnedCount = 0;
+
+			foreach (var job in jobs)
+			{
+				var abilities = abilityTreeDb.Find(job.Id);
+
+				foreach (var abilityData in abilities)
+				{
+					if (abilityData.MaxLevel <= 0)
+						continue;
+
+					target.Abilities.Learn(abilityData.AbilityId, abilityData.MaxLevel);
+					learnedCount++;
+				}
+			}
+
+			if (learnedCount > 0)
+			{
+				sender.ServerMessage(Localization.Get("Set {0} abilities to max level."), learnedCount);
+				if (sender != target)
+					target.ServerMessage(Localization.Get("All {0} abilities set to max level."), learnedCount);
+			}
+			else
+			{
+				sender.ServerMessage(Localization.Get("No abilities found for character's jobs."));
+			}
+
+			return CommandResult.Okay;
+		}
+
+		/// <summary>
+		/// Learns all skills for character's jobs at max level.
+		/// </summary>
+		private CommandResult HandleAllSkills(Character sender, Character target, string message, string command, Arguments args)
+		{
+			var skillTreeDb = ZoneServer.Instance.Data.SkillTreeDb;
+			var jobs = target.Jobs.GetList();
+			var learnedCount = 0;
+
+			foreach (var job in jobs)
+			{
+				var skills = skillTreeDb.FindSkills(job.Id, job.Level);
+
+				foreach (var skillData in skills)
+				{
+					if (skillData.MaxLevel <= 0)
+						continue;
+
+					if (target.Skills.Has(skillData.SkillId))
+					{
+						var existing = target.Skills.Get(skillData.SkillId);
+						if (existing.LevelByDB < skillData.MaxLevel)
+						{
+							existing.LevelByDB = skillData.MaxLevel;
+							existing.Properties.InvalidateAll();
+							Send.ZC_OBJECT_PROPERTY(target.Connection, existing);
+						}
+					}
+					else
+					{
+						var skill = new Skill(target, skillData.SkillId, skillData.MaxLevel);
+						target.Skills.Add(skill);
+					}
+
+					learnedCount++;
+				}
+			}
+
+			if (learnedCount > 0)
+			{
+				Send.ZC_SKILL_LIST(target);
+
+				sender.ServerMessage(Localization.Get("Set {0} skills to max level."), learnedCount);
+				if (sender != target)
+					target.ServerMessage(Localization.Get("All {0} skills set to max level."), learnedCount);
+			}
+			else
+			{
+				sender.ServerMessage(Localization.Get("No skills found for character's jobs."));
+			}
 
 			return CommandResult.Okay;
 		}

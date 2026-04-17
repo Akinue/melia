@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -23,6 +23,7 @@ using static Melia.Zone.Skills.Helpers.SkillTargetHelper;
 using static Melia.Zone.Skills.Helpers.SkillUtilHelper;
 using Melia.Zone.World;
 using Melia.Zone.Buffs;
+using Melia.Zone.Scripting;
 
 namespace Melia.Zone.Skills.Handlers.Pyromancer
 {
@@ -31,7 +32,7 @@ namespace Melia.Zone.Skills.Handlers.Pyromancer
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Pyromancer_EnchantFire)]
-	public class Pyromancer_EnchantFireOverride : IMeleeGroundSkillHandler, IDynamicCasted
+	public class Pyromancer_EnchantFireOverride : IGroundSkillHandler, IDynamicCasted
 	{
 		private const float BuffRange = 300;
 		private const int BuffDurationSeconds = 300;
@@ -45,7 +46,7 @@ namespace Melia.Zone.Skills.Handlers.Pyromancer
 		/// <param name="originPos"></param>
 		/// <param name="farPos"></param>
 		/// <param name="targets"></param>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -59,10 +60,8 @@ namespace Melia.Zone.Skills.Handlers.Pyromancer
 
 			var damageMultiplierIncrease = skill.Level * DamageMultiplierIncreasePerLevel;
 
-			var byAbility = 1f;
-			if (caster.TryGetActiveAbility(AbilityId.Pyromancer16, out var ability))
-				byAbility += ability.Level * 0.005f;
-			damageMultiplierIncrease *= byAbility;
+			var SCR_Get_AbilityReinforceRate = ScriptableFunctions.Skill.Get("SCR_Get_AbilityReinforceRate");
+			damageMultiplierIncrease *= 1f + SCR_Get_AbilityReinforceRate(skill);
 
 			caster.StartBuff(BuffId.EnchantFire_Buff, skill.Level, damageMultiplierIncrease, TimeSpan.FromSeconds(BuffDurationSeconds), caster);
 
@@ -83,7 +82,7 @@ namespace Melia.Zone.Skills.Handlers.Pyromancer
 			}
 
 			// Debuff enemies with ability
-			if (caster.TryGetActiveAbility(AbilityId.Pyromancer6, out ability))
+			if (caster.TryGetActiveAbility(AbilityId.Pyromancer6, out var ability))
 			{
 				var pad = SkillCreatePad(caster, skill, caster.Position, 0, PadName.Wizard_New_EnchantFire);
 				if (pad == null)

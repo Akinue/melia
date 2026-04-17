@@ -51,6 +51,9 @@ public class SkillCalculationsScript : GeneralScript
 
 		value += skill.Properties.GetFloat(PropertyName.GemLevel_BM, 0);
 
+		if (skill.Owner is Character character)
+			value += ItemEquipEffects.GetSkillBonus(character, skill.Id);
+
 		if (value == 0)
 			return 0;
 
@@ -455,7 +458,12 @@ public class SkillCalculationsScript : GeneralScript
 		var sklSpdRate = skill.Properties.GetFloat(PropertyName.SklSpdRate, 1);
 		var baseValue = skill.Data.ShootTime.TotalMilliseconds;
 
-		return (float)(baseValue / sklSpdRate);
+		var result = (float)(baseValue / sklSpdRate);
+
+		if (skill.Owner is Mob mob && mob.Vars.TryGet<float>("Melia.ShootTimeMultiplier", out var mult))
+			result *= mult;
+
+		return result;
 	}
 
 	/// <summary>
@@ -525,10 +533,10 @@ public class SkillCalculationsScript : GeneralScript
 			{
 				if (owner.TryGetBuff(BuffId.Fletcher_CatenaChainArrow_Buff, out var catenaBuff))
 				{
-					var catenaReduction = 0.25f + 0.025f * catenaBuff.NumArg1;
+					var catenaReduction = 0.40f + 0.04f * catenaBuff.NumArg1;
 					if (owner.TryGetActiveAbilityLevel(AbilityId.Fletcher37, out var fletcher37Level))
 						catenaReduction *= 1f + 0.005f * fletcher37Level;
-					catenaReduction = Math.Min(catenaReduction, 0.75f);
+					catenaReduction = Math.Min(catenaReduction, 0.90f);
 					basicCooldown *= (1f - catenaReduction);
 				}
 			}

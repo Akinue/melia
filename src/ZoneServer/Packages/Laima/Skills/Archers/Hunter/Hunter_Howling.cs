@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Threading.Tasks;
 using Melia.Shared.Packages;
@@ -19,9 +19,9 @@ namespace Melia.Zone.Skills.Handlers.Hunter
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Hunter_Howling)]
-	public class Hunter_HowlingOverride : IMeleeGroundSkillHandler
+	public class Hunter_HowlingOverride : IGroundSkillHandler
 	{
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TryGetActiveCompanion(out var companion))
 			{
@@ -39,15 +39,15 @@ namespace Melia.Zone.Skills.Handlers.Hunter
 			skill.IncreaseOverheat();
 			caster.SetAttackState(true);
 
-			var targetHandle = targets.FirstOrDefault()?.Handle ?? 0;
+			var targetHandle = target?.Handle ?? 0;
 			Send.ZC_SKILL_READY(caster, skill, 1, originPos, farPos);
 			Send.ZC_NORMAL.UpdateSkillEffect(caster, targetHandle, originPos, originPos.GetDirection(farPos), Position.Zero);
 			Send.ZC_SKILL_MELEE_GROUND(caster, skill, farPos, ForceId.GetNew(), null);
 
-			skill.Run(this.HandleSkill(caster, skill, companion));
+			skill.Run(HandleSkill(caster, skill, companion));
 		}
 
-		private async Task HandleSkill(ICombatEntity caster, Skill skill, Companion companion)
+		private static async Task HandleSkill(ICombatEntity caster, Skill skill, Companion companion)
 		{
 			await skill.Wait(TimeSpan.FromMilliseconds(400));
 			companion.PlayEffect("F_archer_howling_symbol", scale: 0.25f, heightOffset: EffectLocation.Top);
@@ -56,8 +56,34 @@ namespace Melia.Zone.Skills.Handlers.Hunter
 				.Take(10);
 			foreach (var target in targets)
 			{
-				target.StartBuff(BuffId.Howling_Debuff, skill.Level, 0, TimeSpan.FromSeconds(15), companion);
+				target.StartBuff(BuffId.Howling_Debuff, skill.Level, 0, TimeSpan.FromSeconds(15), companion, skill.Id);
 			}
+		}
+
+		/// <summary>
+		/// Attempts to activate Hunter_Howling from companion AI.
+		/// </summary>
+		public static void TryActivate(ICombatEntity master, Companion companion, ICombatEntity target)
+		{
+			if (!master.TryGetSkill(SkillId.Hunter_Howling, out var skill))
+				return;
+
+			if (skill.IsOnCooldown || target.IsDead)
+				return;
+
+			if (companion.IsDead)
+				return;
+
+			if (!master.TrySpendSp(skill))
+				return;
+
+			skill.IncreaseOverheat();
+
+			Send.ZC_SKILL_READY(master, skill, 1, companion.Position, target.Position);
+			Send.ZC_NORMAL.UpdateSkillEffect(master, target.Handle, companion.Position, companion.Position.GetDirection(target.Position), Position.Zero);
+			Send.ZC_SKILL_MELEE_GROUND(master, skill, target.Position, ForceId.GetNew(), null);
+
+			skill.Run(HandleSkill(master, skill, companion));
 		}
 	}
 }

@@ -51,6 +51,18 @@ namespace Melia.Zone.World.Actors.Characters.Components
 		}
 
 		/// <summary>
+		/// Clears all quests to release references for GC.
+		/// </summary>
+		public void Clear()
+		{
+			lock (_syncLock)
+			{
+				_quests.Clear();
+				_disabledQuests.Clear();
+			}
+		}
+
+		/// <summary>
 		/// Notes the given quest db id as disabled.
 		/// </summary>
 		/// <remarks>
@@ -210,7 +222,7 @@ namespace Melia.Zone.World.Actors.Characters.Components
 			{
 				foreach (var quest in _quests)
 				{
-					if (quest.Status != QuestStatus.InProgress)
+					if (quest.Status != QuestStatus.InProgress && quest.Status != QuestStatus.Success)
 						continue;
 
 					quest.UpdateObjectives(updater);
@@ -218,6 +230,10 @@ namespace Melia.Zone.World.Actors.Characters.Components
 					if (quest.ChangesOnLastUpdate)
 					{
 						quest.UpdateUnlock();
+
+						if (quest.Status == QuestStatus.Success && !quest.IsCompletable)
+							quest.Status = QuestStatus.InProgress;
+
 						this.UpdateClient_UpdateQuest(quest);
 					}
 				}
@@ -1090,6 +1106,7 @@ namespace Melia.Zone.World.Actors.Characters.Components
 			questTable.Insert("Description", quest.Data.Description);
 			questTable.Insert("Location", locationName);
 			questTable.Insert("Level", quest.Data.Level);
+			questTable.Insert("Type", quest.Data.Type.ToString());
 			questTable.Insert("Status", quest.Status.ToString());
 			questTable.Insert("Done", quest.ObjectivesCompleted);
 			questTable.Insert("Cancelable", quest.Data.Cancelable);

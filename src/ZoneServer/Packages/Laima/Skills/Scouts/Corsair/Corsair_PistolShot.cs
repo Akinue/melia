@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -23,11 +23,9 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Corsair
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Corsair_PistolShot)]
-	public class Corsair_PistolShotOverride : IMeleeGroundSkillHandler
+	public class Corsair_PistolShotOverride : IGroundSkillHandler
 	{
-		private const int HitCount = 4;
-
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -56,7 +54,8 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Corsair
 				.LimitBySDR(caster, skill)
 				.ToList();
 
-			for (var i = 0; i < HitCount; i++)
+			var hitCount = 8;
+			for (var i = 0; i < hitCount; i++)
 			{
 				foreach (var target in aoeTargets)
 				{
@@ -78,7 +77,7 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Corsair
 					Send.ZC_HIT_INFO(caster, target, skillHit.HitInfo);
 				}
 
-				if (i < HitCount - 1)
+				if (i < hitCount - 1)
 					await skill.Wait(TimeSpan.FromMilliseconds(60));
 			}
 		}

@@ -6,6 +6,7 @@ using Melia.Shared.World;
 using Melia.Zone.World.Spawning;
 using Yggdrasil.Geometry;
 using Yggdrasil.Geometry.Shapes;
+using Yggdrasil.Util;
 
 namespace Melia.Zone.Scripting
 {
@@ -178,7 +179,7 @@ namespace Melia.Zone.Scripting
 		/// <param name="area">Area in which to spawn monsters in.</param>
 		/// <param name="respawn">Constant delay until killed monsters respawn.</param>
 		/// <returns></returns>
-		public static MonsterSpawner AddSpawner(int monsterClassId, int amount, TimeSpan respawn, string map, IShapeF area)
+		public static MonsterSpawner AddSpawner(int monsterClassId, int amount, TimeSpan? respawn, string map, IShapeF area)
 			=> AddSpawner(monsterClassId, amount, respawn, map, area, TendencyType.Peaceful);
 
 		/// <summary>
@@ -191,7 +192,7 @@ namespace Melia.Zone.Scripting
 		/// <param name="area">Area in which to spawn monsters in.</param>
 		/// <param name="tendency">The aggresive tendencies of spawned monsters.</param>
 		/// <returns></returns>
-		public static MonsterSpawner AddSpawner(int monsterClassId, int amount, TimeSpan respawn, string map, IShapeF area, TendencyType tendency)
+		public static MonsterSpawner AddSpawner(int monsterClassId, int amount, TimeSpan? respawn, string map, IShapeF area, TendencyType tendency)
 			=> AddSpawner(monsterClassId, amount, amount, respawn, map, area, tendency);
 
 		/// <summary>
@@ -204,7 +205,7 @@ namespace Melia.Zone.Scripting
 		/// <param name="map">Class name of the map to spawn monsters one.</param>
 		/// <param name="area">Area in which to spawn monsters in.</param>
 		/// <returns></returns>
-		public static MonsterSpawner AddSpawner(int monsterClassId, int min, int max, TimeSpan respawn, string map, IShapeF area)
+		public static MonsterSpawner AddSpawner(int monsterClassId, int min, int max, TimeSpan? respawn, string map, IShapeF area)
 			=> AddSpawner(monsterClassId, min, max, respawn, map, area, TendencyType.Peaceful);
 
 		/// <summary>
@@ -218,7 +219,7 @@ namespace Melia.Zone.Scripting
 		/// <param name="area">Area in which to spawn monsters in.</param>
 		/// <param name="tendency">The aggresive tendencies of spawned monsters.</param>
 		/// <returns></returns>
-		public static MonsterSpawner AddSpawner(int monsterClassId, int min, int max, TimeSpan respawn, string map, IShapeF area, TendencyType tendency)
+		public static MonsterSpawner AddSpawner(int monsterClassId, int min, int max, TimeSpan? respawn, string map, IShapeF area, TendencyType tendency)
 		{
 			var identifier = GenerateSpawnAreaIdent();
 			AddSpawnPoint(identifier, map, area);
@@ -239,7 +240,7 @@ namespace Melia.Zone.Scripting
 		/// <param name="area">Area in which to spawn monsters in.</param>
 		/// <param name="tendency">The aggresive tendencies of spawned monsters.</param>
 		/// <returns></returns>
-		public static MonsterSpawner AddSpawner(int monsterClassId, int min, int max, TimeSpan initialSpawn, TimeSpan minRespawn, TimeSpan maxRespawn, string map, IShapeF area, TendencyType tendency)
+		public static MonsterSpawner AddSpawner(int monsterClassId, int min, int max, TimeSpan? initialSpawn, TimeSpan? minRespawn, TimeSpan? maxRespawn, string map, IShapeF area, TendencyType tendency)
 		{
 			var identifier = GenerateSpawnAreaIdent();
 			AddSpawnPoint(identifier, map, area);
@@ -256,7 +257,7 @@ namespace Melia.Zone.Scripting
 		/// <param name="respawn">Constant delay until killed monsters respawn.</param>
 		/// <param name="tendency">The aggresive tendencies of spawned monsters.</param>
 		/// <returns></returns>
-		public static MonsterSpawner AddSpawner(string identifier, int monsterClassId, int amount, TimeSpan respawn = default, TendencyType tendency = TendencyType.Peaceful)
+		public static MonsterSpawner AddSpawner(string identifier, int monsterClassId, int amount, TimeSpan? respawn = null, TendencyType tendency = TendencyType.Peaceful)
 			=> AddSpawner(identifier, monsterClassId, amount, amount, TimeSpan.Zero, respawn, respawn, tendency);
 
 		/// <summary>
@@ -269,14 +270,8 @@ namespace Melia.Zone.Scripting
 		/// <param name="respawn">Constant delay until killed monsters respawn.</param>
 		/// <param name="tendency">The aggresive tendencies of spawned monsters.</param>
 		/// <returns></returns>
-		public static MonsterSpawner AddSpawner(string identifier, int monsterClassId, int min, int max, TimeSpan respawn = default, TendencyType tendency = TendencyType.Peaceful)
-		{
-			var initialSpawnDelay = TimeSpan.Zero;
-			var minRespawnDelay = respawn;
-			var maxRespawnDelay = respawn;
-
-			return AddSpawner(identifier, monsterClassId, min, max, initialSpawnDelay, minRespawnDelay, maxRespawnDelay, tendency);
-		}
+		public static MonsterSpawner AddSpawner(string identifier, int monsterClassId, int min, int max, TimeSpan? respawn = null, TendencyType tendency = TendencyType.Peaceful)
+			=> AddSpawner(identifier, monsterClassId, min, max, TimeSpan.Zero, respawn, respawn, tendency);
 
 		/// <summary>
 		/// Adds a spawner to the world.
@@ -290,16 +285,58 @@ namespace Melia.Zone.Scripting
 		/// <param name="maxRespawn">Maximum delay before killed monsters are respawned.</param>
 		/// <param name="tendency">The aggresive tendencies of spawned monsters.</param>
 		/// <returns></returns>
-		public static MonsterSpawner AddSpawner(string identifier, int monsterClassId, int min, int max, TimeSpan initialSpawn, TimeSpan minRespawn, TimeSpan maxRespawn, TendencyType tendency)
+		public static MonsterSpawner AddSpawner(string identifier, int monsterClassId, int min, int max, TimeSpan? initialSpawn, TimeSpan? minRespawn, TimeSpan? maxRespawn, TendencyType tendency)
 		{
 			if (ZoneServer.Instance.Data.MonsterDb.Entries.ContainsKey(monsterClassId))
 			{
-				var spawner = new MonsterSpawner(monsterClassId, min, max, identifier, initialSpawn, minRespawn, maxRespawn, tendency);
+				var initialSpawnTime = initialSpawn ?? TimeSpan.Zero;
+				var minRespawnTime = minRespawn ?? ZoneServer.Instance.Conf.World.DefaultMinRespawn;
+				var maxRespawnTime = maxRespawn ?? ZoneServer.Instance.Conf.World.DefaultMaxRespawn;
+
+				minRespawnTime = Math2.Max(TimeSpan.Zero, minRespawnTime);
+				maxRespawnTime = Math2.Max(minRespawnTime, maxRespawnTime);
+
+				var spawner = new MonsterSpawner(monsterClassId, min, max, identifier, initialSpawnTime, minRespawnTime, maxRespawnTime, tendency);
 				ZoneServer.Instance.World.AddSpawner(spawner);
 
 				return spawner;
 			}
 			return null;
+		}
+
+		/// <summary>
+		/// Registers a buff to be applied with a percentage chance to
+		/// monsters when they spawn on the given map. If a monster
+		/// already has the buff (e.g. from the rare monster system),
+		/// it will not be applied again.
+		/// </summary>
+		/// <param name="mapClassName"></param>
+		/// <param name="buffId"></param>
+		/// <param name="chance">Chance in percent (0-100) for the buff to be applied.</param>
+		/// <param name="numArg1">First numeric argument for the buff.</param>
+		/// <param name="numArg2">Second numeric argument for the buff.</param>
+		public static void AddSpawnBuff(string mapClassName, BuffId buffId, float chance, float numArg1 = 0, float numArg2 = 0)
+		{
+			var map = GetMapOrThrow(mapClassName);
+			map.AddSpawnBuff(new SpawnBuffEntry(buffId, chance, numArg1, numArg2));
+		}
+
+		/// <summary>
+		/// Registers a buff to be applied with a percentage chance to a
+		/// specific monster type when it spawns on the given map. If the
+		/// monster already has the buff (e.g. from the rare monster system),
+		/// it will not be applied again.
+		/// </summary>
+		/// <param name="mapClassName"></param>
+		/// <param name="monsterClassId">The monster class id to apply the buff to.</param>
+		/// <param name="buffId"></param>
+		/// <param name="chance">Chance in percent (0-100) for the buff to be applied.</param>
+		/// <param name="numArg1">First numeric argument for the buff.</param>
+		/// <param name="numArg2">Second numeric argument for the buff.</param>
+		public static void AddSpawnBuff(string mapClassName, int monsterClassId, BuffId buffId, float chance, float numArg1 = 0, float numArg2 = 0)
+		{
+			var map = GetMapOrThrow(mapClassName);
+			map.AddSpawnBuff(new SpawnBuffEntry(buffId, chance, numArg1, numArg2, monsterClassId));
 		}
 
 		/// <summary>

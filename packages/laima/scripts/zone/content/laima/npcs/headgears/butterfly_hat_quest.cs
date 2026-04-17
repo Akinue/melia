@@ -1,10 +1,11 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.Dialogues;
 using Melia.Zone.World.Quests;
 using Melia.Zone.World.Quests.Objectives;
 using Melia.Zone.World.Quests.Rewards;
 using static Melia.Zone.Scripting.Shortcuts;
+using Melia.Zone.World.Actors.Characters;
 
 public class ButterflyHatQuestScript : QuestScript
 {
@@ -22,6 +23,7 @@ public class ButterflyHatQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -58,9 +60,6 @@ public class ButterflyHatQuestScript : QuestScript
 				if (player.Inventory.HasItem(LeaflyWingId, 150) &&
 					player.Inventory.HasItem(DilgeleId, 25))
 				{
-					player.Inventory.RemoveItem(LeaflyWingId, 150);
-					player.Inventory.RemoveItem(DilgeleId, 25);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("Oh, these are perfect! *carefully crafts the hat* Here you are, dear. Now you can carry a piece of these beautiful butterflies with you wherever you go."));
 				}
@@ -89,5 +88,11 @@ public class ButterflyHatQuestScript : QuestScript
 			default:
 				break;
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(LeaflyWingId, 150);
+		character.Inventory.RemoveItem(DilgeleId, 25);
 	}
 }

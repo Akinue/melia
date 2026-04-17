@@ -1,4 +1,4 @@
-using Melia.Shared.Packages;
+﻿using Melia.Shared.Packages;
 using Melia.Shared.Game.Const;
 using Melia.Shared.L10N;
 using Melia.Shared.World;
@@ -18,9 +18,9 @@ namespace Melia.Zone.Skills.Handlers.Clerics.Sadhu
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Sadhu_Prakriti)]
-	public class Sadhu_PrakritiOverride : IMeleeGroundSkillHandler
+	public class Sadhu_PrakritiOverride : IGroundSkillHandler
 	{
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.IsBuffActive(BuffId.OOBE_Soulmaster_Buff))
 				return;
@@ -41,12 +41,9 @@ namespace Melia.Zone.Skills.Handlers.Clerics.Sadhu
 			Send.ZC_NORMAL.UpdateSkillEffect(caster, caster.Handle, caster.Position, caster.Direction, farPos);
 			Send.ZC_SKILL_MELEE_GROUND(caster, skill, caster.Position, ForceId.GetNew(), null);
 
-			if (!caster.TryGetBuff(BuffId.OOBE_Soulmaster_Buff, out var oobeBuff))
-				return;
-
-			var dummyHandle = (int)oobeBuff.NumArg2;
-			if (casterCharacter.Map.TryGetCharacter(dummyHandle, out var dummyCharacter))
-				dummyCharacter.Position = casterCharacter.Position;
+			var dummy = casterCharacter.Map.GetCharacter(c => c is DummyCharacter d && d.Owner == casterCharacter);
+			if (dummy != null)
+				dummy.Position = casterCharacter.Position;
 
 			caster.StopBuff(BuffId.OOBE_Soulmaster_Buff);
 		}

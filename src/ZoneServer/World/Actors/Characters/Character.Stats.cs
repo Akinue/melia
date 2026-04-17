@@ -52,7 +52,7 @@ namespace Melia.Zone.World.Actors.Characters
 			get
 			{
 				var job = this.Jobs.Get(this.JobId);
-				return job.Level;
+				return job?.Level ?? 1;
 			}
 		}
 
@@ -181,6 +181,11 @@ namespace Melia.Zone.World.Actors.Characters
 		public SizeType EffectiveSize => SizeType.PC;
 
 		/// <summary>
+		/// Returns the character's agent radius (always 5 for players).
+		/// </summary>
+		public float AgentRadius => 5;
+
+		/// <summary>
 		/// Returns the character's monster rank (always Normal for players).
 		/// </summary>
 		public MonsterRank Rank => MonsterRank.Normal;
@@ -248,7 +253,7 @@ namespace Melia.Zone.World.Actors.Characters
 			//var maxLevel = ZoneServer.Instance.Data.ExpDb.GetMaxLevel();
 
 			// Consume EXP as many times as possible to reach new levels
-			while (this.Exp >= maxExp && level < maxLevel)
+			while (maxExp > 0 && this.Exp >= maxExp && level < maxLevel)
 			{
 				this.Exp -= maxExp;
 
@@ -270,24 +275,28 @@ namespace Melia.Zone.World.Actors.Characters
 			var rank = this.Jobs.GetCurrentRank();
 			var job = this.Job;
 
-			// Limit EXP to the total max, otherwise the client will
-			// display level 1 with 0%.
-			job.TotalExp = Math.Min(job.TotalMaxExp, (job.TotalExp + jobExp));
+			if (job != null)
+			{
+				// Limit EXP to the total max, otherwise the client will
+				// display level 1 with 0%.
+				job.TotalExp = Math.Min(job.TotalMaxExp, (job.TotalExp + jobExp));
 
-			var newJobLevel = this.JobLevel;
-			var jobLevelsGained = (newJobLevel - jobLevel);
+				var newJobLevel = this.JobLevel;
+				var jobLevelsGained = (newJobLevel - jobLevel);
 
-			Send.ZC_JOB_EXP_UP(this, jobExp);
+				Send.ZC_JOB_EXP_UP(this, jobExp);
 
-			if (jobLevelsGained > 0)
-				this.FinishJobLevelChange(jobLevelsGained);
+				if (jobLevelsGained > 0)
+					this.FinishJobLevelChange(jobLevelsGained);
+			}
 
 			if (this.HasCompanions)
 			{
 				// Pretty sure companions get reduced exp, but don't remember the exact value.
-				exp = (long)(exp * .25f);
-				foreach (var companion in this.Companions.GetList())
-					companion.GiveExp(exp, monster);
+				var companionExp = (long)(exp * .25f);
+				var activeCompanion = this.Companions.ActiveCompanion;
+				if (activeCompanion != null)
+					activeCompanion.GiveExp(companionExp, monster);
 			}
 		}
 

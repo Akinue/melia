@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Melia.Shared.Packages;
@@ -21,7 +21,7 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Assassin
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Assassin_InstantaneousAcceleration)]
-	public class Assassin_InstantaneousAccelerationOverride : IMeleeGroundSkillHandler
+	public class Assassin_InstantaneousAccelerationOverride : IGroundSkillHandler
 	{
 		/// <summary>
 		/// Handles skill, damaging targets.
@@ -30,7 +30,7 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Assassin
 		/// <param name="caster"></param>
 		/// <param name="originPos"></param>
 		/// <param name="farPos"></param>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (caster is Character character)
 			{
@@ -92,7 +92,7 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Assassin
 				if (caster.IsAbilityActive(AbilityId.Assassin8))
 				{
 					modifier.HitCount *= 2;
-					modifier.FinalDamageMultiplier -= 0.25f;
+					modifier.FinalDamageMultiplier *= 0.75f;
 				}
 
 				// Increase damage by 10% if target is under the effect of

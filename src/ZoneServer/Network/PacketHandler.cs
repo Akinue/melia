@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -114,14 +114,6 @@ namespace Melia.Zone.Network
 				sessionKey = packet.GetString(64);
 			}
 
-			var enqueuedAt = Stopwatch.GetTimestamp();
-
-			SaveQueue.Enqueue(() => this.ProcessConnect(conn, accountId, characterId, accountName, sessionKey, fromBarracks1, enqueuedAt));
-		}
-
-		private void ProcessConnect(IZoneConnection conn, long accountId, long characterId, string accountName, string sessionKey, bool fromBarracks1, long enqueuedAt)
-		{
-			var queuedMs = (Stopwatch.GetTimestamp() - enqueuedAt) * 1000 / Stopwatch.Frequency;
 			var sw = Stopwatch.StartNew();
 			long authMs = 0, cleanupMs = 0, loadMs = 0;
 			long cleanupSaveMs = 0, cleanupRemoveMs = 0, cleanupCloseMs = 0;
@@ -130,14 +122,6 @@ namespace Melia.Zone.Network
 
 			try
 			{
-				if (ServerShutdownManager.Instance.IsShutdownPending)
-				{
-					var remaining = ServerShutdownManager.Instance.GetRemainingTimeFormatted();
-					Log.Info("Rejected login attempt from '{0}' - server is shutting down ({1} remaining).", accountName, remaining);
-					Send.ZC_CONNECT_FAILED(conn, 1, "Server is shutting down. Please try again later.");
-					return;
-				}
-
 				conn.Account = ZoneServer.Instance.Database.GetAccount(accountName);
 				if (conn.Account == null)
 				{
@@ -145,6 +129,9 @@ namespace Melia.Zone.Network
 					conn.Close();
 					return;
 				}
+
+				if (conn.Account.Variables.Perm.Has("Melia.SelectedLanguage"))
+					conn.SelectedLanguage = conn.Account.Variables.Perm.GetString("Melia.SelectedLanguage");
 
 				if (!ZoneServer.Instance.Database.CheckSessionKey(conn.Account.Id, sessionKey))
 				{
@@ -168,6 +155,8 @@ namespace Melia.Zone.Network
 					existingCharacter.SavedForWarp = true;
 
 					var removeStart = sw.ElapsedMilliseconds;
+					foreach (var companion in existingCharacter.Companions.GetList())
+						companion.Map?.RemoveMonster(companion);
 					existingCharacter.Map?.RemoveCharacter(existingCharacter);
 					cleanupRemoveMs = sw.ElapsedMilliseconds - removeStart;
 
@@ -175,29 +164,19 @@ namespace Melia.Zone.Network
 					existingCharacter.Connection?.Close();
 					cleanupCloseMs = sw.ElapsedMilliseconds - closeStart;
 
-					// Run the save in the background with a bounded wait so the
-					// reconnect isn't blocked by a slow DB transaction. If the
-					// save doesn't finish within 5 seconds, proceed anyway — the
-					// DB already has autosave data, and the background save will
-					// still complete eventually.
 					var charToSave = existingCharacter;
 					var saveStart = sw.ElapsedMilliseconds;
-					var saveTask = Task.Run(() =>
+					try
 					{
-						try
-						{
-							ZoneServer.Instance.Database.SaveCharacterData(charToSave);
-						}
-						catch (Exception ex)
-						{
-							Log.Error($"CZ_CONNECT: Background save failed for '{charToSave.Name}' ({charToSave.DbId}): {ex}");
-						}
-					});
-
-					const int SaveTimeoutMs = 5000;
-					if (!saveTask.Wait(SaveTimeoutMs))
+						ZoneServer.Instance.Database.SavePlayerData(charToSave, charToSave.Connection?.Account);
+					}
+					catch (Exception ex)
 					{
-						Log.Warning($"CZ_CONNECT: Save for '{charToSave.Name}' ({charToSave.DbId}) didn't finish within {SaveTimeoutMs}ms. Proceeding with reconnect; save continues in background.");
+						Log.Error($"CZ_CONNECT: Save failed for '{charToSave.Name}' ({charToSave.DbId}): {ex}");
+					}
+					finally
+					{
+						CharacterLockManager.TryRemoveLock(charToSave.DbId);
 					}
 					cleanupSaveMs = sw.ElapsedMilliseconds - saveStart;
 				}
@@ -205,7 +184,14 @@ namespace Melia.Zone.Network
 				if (existingCharacter != null && existingCharacter.IsAutoTrading)
 				{
 					var saveStart = sw.ElapsedMilliseconds;
-					ZoneServer.Instance.Database.SaveCharacterData(existingCharacter);
+					try
+					{
+						ZoneServer.Instance.Database.SavePlayerData(existingCharacter);
+					}
+					catch (Exception ex)
+					{
+						Log.Error($"CZ_CONNECT: Auto-trade save failed for '{existingCharacter.Name}' ({existingCharacter.DbId}): {ex}");
+					}
 					cleanupSaveMs = sw.ElapsedMilliseconds - saveStart;
 				}
 
@@ -237,6 +223,8 @@ namespace Melia.Zone.Network
 				var ghost = map.GetCharacter(c => c.DbId == character.DbId && c.Handle != character.Handle);
 				if (ghost != null)
 				{
+					foreach (var companion in ghost.Companions.GetList())
+						companion.Map?.RemoveMonster(companion);
 					Send.ZC_LEAVE(ghost);
 					ghost.IsAutoTrading = false;
 					ghost.IsOnline = false;
@@ -293,7 +281,7 @@ namespace Melia.Zone.Network
 				if (charName != null)
 				{
 					var cleanupStr = cleanupMs > 0 ? $", cleanup={cleanupMs} [save={cleanupSaveMs}, remove={cleanupRemoveMs}, close={cleanupCloseMs}]" : "";
-					Log.Info($"CZ_CONNECT: '{charName}' (ID: {charDbId}) ready in {sw.ElapsedMilliseconds}ms [queued={queuedMs}, auth={authMs}{cleanupStr}, load={loadMs}, setup={setupMs}]");
+					Log.Info($"CZ_CONNECT: '{charName}' (ID: {charDbId}) ready in {sw.ElapsedMilliseconds}ms [auth={authMs}{cleanupStr}, load={loadMs}, setup={setupMs}]");
 				}
 			}
 		}
@@ -366,7 +354,8 @@ namespace Melia.Zone.Network
 				Send.ZC_LOGIN_TIME(conn, DateTime.Now);
 				Send.ZC_MYPC_ENTER(character);
 
-	
+				character.ActivateCompanions();
+
 				if (conn.Party != null) // Guild check removed: Guild type deleted
 					Send.ZC_NORMAL.ShowParty(character);
 
@@ -418,8 +407,7 @@ namespace Melia.Zone.Network
 				Send.ZC_UPDATE_SKL_SPDRATE_LIST(character, skillUpdateList);
 				Send.ZC_NORMAL.AccountProperties(character);
 
-				// Send companion info and schedule activation
-				// after scripts have run on the player (i.e. set layer)
+				// Send companion info
 				if (character.HasCompanions)
 				{
 					foreach (var companion in character.Companions.GetList())
@@ -428,7 +416,6 @@ namespace Melia.Zone.Network
 						Send.ZC_OBJECT_PROPERTY(character.Connection, companion);
 					}
 					Send.ZC_NORMAL.PetInfo(character);
-					character.ScheduleCompanionActivation();
 				}
 
 				Send.ZC_ANCIENT_CARD_RESET(conn);
@@ -526,7 +513,7 @@ namespace Melia.Zone.Network
 				character.Inventory.ProcessEquipScripts();
 				character.Inventory.ProcessCardScripts();
 
-				// Send companion info and schedule activation after scripts have set layer
+				// Send companion info
 				if (character.HasCompanions)
 				{
 					foreach (var companion in character.Companions.GetList())
@@ -535,7 +522,6 @@ namespace Melia.Zone.Network
 						Send.ZC_OBJECT_PROPERTY(character.Connection, companion);
 					}
 					Send.ZC_NORMAL.PetInfo(character);
-					character.ScheduleCompanionActivation();
 				}
 			}
 
@@ -556,18 +542,7 @@ namespace Melia.Zone.Network
 		{
 			var character = conn.SelectedCharacter;
 
-			if (character != null)
-			{
-				var enqueuedAt = Stopwatch.GetTimestamp();
-				SaveQueue.Enqueue(() =>
-				{
-					var queuedMs = (Stopwatch.GetTimestamp() - enqueuedAt) * 1000 / Stopwatch.Frequency;
-					var sw = Stopwatch.StartNew();
-					character.FinalizeWarp();
-					sw.Stop();
-					Log.Info($"FinalizeWarp: '{character.Name}' (ID: {character.DbId}) completed in {sw.ElapsedMilliseconds}ms [queued={queuedMs}]");
-				});
-			}
+			character.FinalizeWarp();
 		}
 
 		/// <summary>
@@ -687,16 +662,14 @@ namespace Melia.Zone.Network
 			// new session key on login, which invalidates the old key and
 			// would cause the deferred save in CleanUpAndSave to skip
 			// saving entirely.
-			conn.SaveAccountAndCharacter();
 			character.SavedForWarp = true;
+			ZoneServer.Instance.Database.SavePlayerData(character, conn.Account);
+			ZoneServer.Instance.Database.UpdateLoginState(conn.Account.Id, 0, LoginState.LoggedOut);
 
 			Log.Info("User '{0}' is leaving for character selection.", conn.Account.Name);
 
 			Send.ZC_SAVE_INFO(conn);
 			Send.ZC_MOVE_BARRACK(conn);
-			// TODO: Temp fix, essentially a race condition between Login States between Barracks and Zone Server.
-			// Force the correct state before the client switches to Barracks.
-			ZoneServer.Instance.Database.UpdateLoginState(conn.Account.Id, 0, LoginState.LoggedOut);
 		}
 
 		/// <summary>
@@ -739,7 +712,7 @@ namespace Melia.Zone.Network
 
 				var character = conn.SelectedCharacter;
 
-				if (character.IsDead)
+				if (character.IsDead || character.IsWarping)
 					return;
 
 				character.Movement.NotifyJump(position, direction, unkFloat, unkByte2);
@@ -748,7 +721,7 @@ namespace Melia.Zone.Network
 			{
 				var character = conn.SelectedCharacter;
 
-				if (character.IsDead)
+				if (character.IsDead || character.IsWarping)
 					return;
 
 				character.Movement.NotifyJump(character.Position, character.Direction, (float)ZoneServer.Instance.World.WorldTime.Elapsed.TotalSeconds, unkByte1);
@@ -863,6 +836,8 @@ namespace Melia.Zone.Network
 			// TODO: Is there a broadcast for this?
 
 			//conn.SelectedCharacter.SetPosition(position);
+			if (character.IsWarping)
+				return;
 			if (character.Components.TryGet<AttachmentComponent>(out var attachment) && attachment.IsAttached)
 				return;
 			character?.Movement?.NotifyStopMove(position, character.Direction);
@@ -1071,7 +1046,7 @@ namespace Melia.Zone.Network
 			}
 
 			// Check potential
-			if (item.Potential <= 0)
+			if (Feature.IsEnabled("HeadgearEnchantsConsumePotential") && item.Potential <= 0)
 			{
 				character.SystemMessage("NoMorePotential");
 				return;
@@ -1088,7 +1063,8 @@ namespace Melia.Zone.Network
 			item.GenerateRandomHatOptions(minOptions, maxOptions + 1);
 
 			// Reduce potential by 1
-			item.Properties.Modify(PropertyName.PR, -1);
+			if (Feature.IsEnabled("HeadgearEnchantsConsumePotential"))
+				item.Properties.Modify(PropertyName.PR, -1);
 
 			// Update item properties
 			Send.ZC_OBJECT_PROPERTY(character.Connection, item);
@@ -1549,7 +1525,7 @@ namespace Melia.Zone.Network
 				}
 
 				// Check potential
-				if (itemUsedOn.Potential <= 0)
+				if (Feature.IsEnabled("HeadgearEnchantsConsumePotential") && itemUsedOn.Potential <= 0)
 				{
 					character.SystemMessage("NoMorePotential");
 					return;
@@ -1562,7 +1538,11 @@ namespace Melia.Zone.Network
 				if (maxOptions <= 0) maxOptions = 2;
 
 				itemUsedOn.GenerateRandomHatOptions(minOptions, maxOptions + 1);
-				itemUsedOn.Properties.Modify(PropertyName.PR, -1);
+
+				// Reduce potential by 1
+				if (Feature.IsEnabled("HeadgearEnchantsConsumePotential"))
+					itemUsedOn.Properties.Modify(PropertyName.PR, -1);
+
 				character.Inventory.Remove(item1WorldId);
 				Send.ZC_OBJECT_PROPERTY(conn, itemUsedOn);
 			}
@@ -1597,8 +1577,7 @@ namespace Melia.Zone.Network
 				return;
 			}
 
-			// Enemies usually can't be talked to unless specific scripts enable it.
-			if (monster.MonsterType == RelationType.Enemy)
+			if (monster is Mob)
 			{
 				// Optional: Check if the enemy specifically has a DialogComponent enabled
 				// For now, adhere to standard logic:
@@ -1639,6 +1618,12 @@ namespace Melia.Zone.Network
 			if (conn.CurrentDialog == null)
 			{
 				Log.Debug("CZ_DIALOG_SELECT: User '{0}' is not in a dialog.", conn.Account.Name);
+				return;
+			}
+
+			if (conn.CurrentDialog.State != DialogState.Waiting)
+			{
+				Log.Debug("CZ_DIALOG_SELECT: User '{0}' is not currently selecting an option.", conn.Account.Name);
 				return;
 			}
 
@@ -1687,6 +1672,7 @@ namespace Melia.Zone.Network
 				if (conn.ActiveShop != null)
 				{
 					conn.ActiveShop = null;
+					conn.ActiveShopOwnerHandle = 0;
 					Send.ZC_DIALOG_CLOSE(conn);
 					Send.ZC_LEAVE_TRIGGER(conn);
 					Send.ZC_ENABLE_CONTROL(conn, "AUTOSELLER", true);
@@ -1707,8 +1693,6 @@ namespace Melia.Zone.Network
 			}
 			else
 			{
-				Send.ZC_DIALOG_CLOSE(conn);
-				Send.ZC_LEAVE_TRIGGER(conn);
 				conn.CurrentDialog?.Cancel();
 				conn.CurrentDialog = null;
 			}
@@ -1838,7 +1822,14 @@ namespace Melia.Zone.Network
 				{
 					case SkillUseType.MeleeGround:
 					{
-						if (!ZoneServer.Instance.SkillHandlers.TryGetHandler<IMeleeGroundSkillHandler>(skillId, out var handler))
+						if (ZoneServer.Instance.SkillHandlers.TryGetHandler<IMeleeGroundSkillHandler>(skillId, out var meleeHandler))
+						{
+							skill.PrepareCancellation();
+							meleeHandler.Handle(skill, character, originPos, farPos, targets);
+							break;
+						}
+
+						if (!ZoneServer.Instance.SkillHandlers.TryGetHandler<IGroundSkillHandler>(skillId, out var handler))
 						{
 							character.ServerMessage(Localization.Get("This skill has not been implemented yet."));
 							Log.Warning("CZ_CLIENT_HIT_LIST: No handler for skill '{0}' found.", skillId);
@@ -1846,7 +1837,7 @@ namespace Melia.Zone.Network
 						}
 
 						skill.PrepareCancellation();
-						handler.Handle(skill, character, originPos, farPos, targets.ToArray());
+						handler.Handle(skill, character, originPos, farPos, targets.FirstOrDefault());
 						break;
 					}
 					case SkillUseType.Force:
@@ -2096,20 +2087,11 @@ namespace Melia.Zone.Network
 			ICombatEntity target = null;
 			if (targetHandle != 0)
 			{
-				if (!character.Map.TryGetActor(targetHandle, out var actor))
+				if (character.Map.TryGetActor(targetHandle, out var actor))
 				{
-					Log.Warning("CZ_SKILL_GROUND: User '{0}' tried to use skill '{1}' on a non-existing target.", conn.Account.Name, skill.Id);
-					return;
+					if (actor is ICombatEntity ce && character.CanDamage(ce))
+						target = ce;
 				}
-
-				// The client sends a handle regardless of who you're
-				// targetting, including friendlies and NPCs. The latter
-				// we're going to exclude for now, under the assumption
-				// that you never use skills on "non-combatants."
-				// We probably want a more sophisticated target check
-				// down the line, based on the skill's target options.
-				if (actor is ICombatEntity ce)
-					target = ce;
 			}
 
 			// Try to use skill
@@ -2134,7 +2116,7 @@ namespace Melia.Zone.Network
 					}
 					case SkillUseType.MeleeGround:
 					{
-						if (!ZoneServer.Instance.SkillHandlers.TryGetHandler<IMeleeGroundSkillHandler>(skillId, out var handler))
+						if (!ZoneServer.Instance.SkillHandlers.TryGetHandler<IGroundSkillHandler>(skillId, out var handler))
 						{
 							character.ServerMessage(Localization.Get("This skill has not been implemented yet."));
 							Log.Warning("CZ_SKILL_GROUND: No melee ground handler for skill '{0}' found.", skillId);
@@ -2304,8 +2286,8 @@ namespace Melia.Zone.Network
 		}
 
 		/// <summary>
-		/// Sent when character is using the ground position selection tool
-		/// starts.
+		/// Sent when character is using the ground position selection
+		/// tool, like for certain skills.
 		/// </summary>
 		/// <param name="conn"></param>
 		/// <param name="packet"></param>
@@ -2314,11 +2296,12 @@ namespace Melia.Zone.Network
 		{
 			var character = conn.SelectedCharacter;
 
-			// TODO: keep track of state?
+			// TODO: Keep track of state?
 		}
 
 		/// <summary>
-		/// Sent when character is using the ground position selection tool ends
+		/// Sent when character stops using the ground position selection
+		/// tool, like at the end of selecting a destination for a skill.
 		/// </summary>
 		/// <param name="conn"></param>
 		/// <param name="packet"></param>
@@ -2327,7 +2310,7 @@ namespace Melia.Zone.Network
 		{
 			var character = conn.SelectedCharacter;
 
-			// TODO: keep track of state?
+			// TODO: Keep track of state?
 		}
 
 		/// <summary>
@@ -2673,6 +2656,15 @@ namespace Melia.Zone.Network
 					return;
 				}
 
+				// Verify the shop owner matches who the buyer originally opened
+				// the shop with, to prevent cross-shop contamination when a
+				// buyer clicks on a different sell shop before completing purchase.
+				if (conn.ActiveShopOwnerHandle != 0 && conn.ActiveShopOwnerHandle != shopOwner.Handle)
+				{
+					Log.Warning("CZ_ITEM_BUY: User '{0}' ActiveShop owner mismatch (expected {1}, got {2}). Possible cross-shop contamination.", conn.Account.Name, conn.ActiveShopOwnerHandle, shopOwner.Handle);
+					return;
+				}
+
 				// Check and reduce money
 				if (character.Inventory.CountItem(ItemId.Silver) < totalCost)
 				{
@@ -2763,7 +2755,13 @@ namespace Melia.Zone.Network
 						return;
 					}
 
-					// Execute all transactions
+					// Execute all transactions, tracking the actual cost of
+					// items that were successfully transferred. This prevents
+					// silver from being deducted/credited when a concurrent
+					// buyer purchased the same product between validation and
+					// execution phases.
+					var executedCost = 0;
+
 					foreach (var successfulPurchase in successfulPurchases)
 					{
 						var productData = successfulPurchase.Item1;
@@ -2815,6 +2813,13 @@ namespace Melia.Zone.Network
 							foreach (var transferItem in itemsToTransfer)
 								character.Inventory.Add(transferItem, InventoryAddType.Buy);
 
+							// Track actual cost for items that were transferred
+							if (totalRemoved > 0)
+							{
+								var productPrice = (int)(productData.Price * productData.PriceMultiplier * discountMultiplier);
+								executedCost += productPrice * totalRemoved;
+							}
+
 							// Update product state
 							productData.RequiredAmount -= totalRemoved;
 							productData.Amount -= totalRemoved;  // Also update Amount for UI
@@ -2827,9 +2832,12 @@ namespace Melia.Zone.Network
 						}
 					}
 
-					// Transfer silver
-					character.Inventory.Remove(ItemId.Silver, actualTotalCost, InventoryItemRemoveMsg.Given);
-					shopOwner.Inventory.Add(ItemId.Silver, actualBaseCost, InventoryAddType.Sell);
+					// Only transfer silver for items that were actually transferred
+					if (executedCost > 0)
+					{
+						character.Inventory.Remove(ItemId.Silver, executedCost, InventoryItemRemoveMsg.Given);
+						shopOwner.Inventory.Add(ItemId.Silver, executedCost, InventoryAddType.Sell);
+					}
 				}
 				else
 				{
@@ -2886,6 +2894,7 @@ namespace Melia.Zone.Network
 					// Close buyer's shop dialog FIRST (before broadcast so they don't react to it)
 					Send.ZC_DIALOG_CLOSE(conn);
 					conn.ActiveShop = null;
+					conn.ActiveShopOwnerHandle = 0;
 					Send.ZC_ENABLE_CONTROL(conn, "AUTOSELLER", true);
 					Send.ZC_LOCK_KEY(character, "AUTOSELLER", false);
 
@@ -2894,7 +2903,7 @@ namespace Melia.Zone.Network
 					shopData.IsClosed = true;
 					Send.ZC_AUTOSELLER_LIST(shopOwner.Connection, shopOwner);
 					Send.ZC_AUTOSELLER_TITLE(shopOwner);
-					Send.ZC_NORMAL.ShopAnimation(shopOwner.Connection, shopOwner, "Squire_Repair", 1, 0);
+					Send.ZC_NORMAL.ShopAnimation(shopOwner, "Squire_Repair", 1, 0);
 					shopOwner.Connection.ShopCreated = null;
 
 					// Close seller's shop management UI (personal_sell_shop_my frame for sell shops)
@@ -2911,7 +2920,7 @@ namespace Melia.Zone.Network
 
 					// Update seller's shop UI
 					if (shopOwner.Connection.ShopCreated != null)
-						Send.ZC_AUTOSELLER_LIST(shopOwner);
+						Send.ZC_AUTOSELLER_LIST(shopOwner.Connection, shopOwner);
 
 					// Update buyer's shop UI
 					if (shopData.IsCustom)
@@ -3786,6 +3795,8 @@ namespace Melia.Zone.Network
 					handler.Handle(skill, skill.Owner);
 			}
 
+			ZoneServer.Instance.ServerEvents.PlayerLoadComplete.Raise(new PlayerEventArgs(character));
+
 			//character.ShowHelp("TUTO_MOVE_KB");
 			//character.ShowHelp("TUTO_MOVE_JUMP");
 		}
@@ -3867,6 +3878,18 @@ namespace Melia.Zone.Network
 			var sysMsg = lockItem ? "{Item}LockSuccess" : "{Item}UnlockSuccess";
 			character.SystemMessage(sysMsg, new MsgParameter("Item", item.Data.Name));
 			Send.ZC_ITEM_LOCK_STATE(character, item);
+		}
+
+		/// <summary>
+		/// Dummy Handler
+		/// </summary>
+		/// <remarks>Someone was sending this, maybe it's via an an addon?</remarks>
+		/// <param name="conn"></param>
+		/// <param name="packet"></param>
+		[PacketHandler(Op.CZ_OBJ_RECORD_POS)]
+		public void CZ_OBJ_RECORD_POS(IZoneConnection conn, Packet packet)
+		{
+			// Unknown purpose
 		}
 
 		/// <summary> 
@@ -4312,12 +4335,9 @@ namespace Melia.Zone.Network
 			var accountId = packet.GetLong();
 
 			var account = ZoneServer.Instance.World.GetCharacter(c => c.AccountDbId == accountId);
-			if (account != null)
-			{
-				var character = account.Connection.SelectedCharacter;
-				// Removed: Guild type deleted during Laima merge
+			var character = account?.Connection?.SelectedCharacter;
+			if (character != null)
 				Send.ZC_RESPONSE_GUILD_INDEX(conn, character, null);
-			}
 		}
 
 		/// <summary>
@@ -4898,15 +4918,25 @@ namespace Melia.Zone.Network
 		/// <summary>
 		/// Sent when selecting a new language.
 		/// </summary>
+		/// <remarks>
+		/// See handler for CB_SELECTED_LANGUAGE for more information on
+		/// how language selection works.
+		/// </remarks>
 		/// <param name="conn"></param>
 		/// <param name="packet"></param>
 		[PacketHandler(Op.CZ_SELECTED_LANGUAGE)]
 		public void CZ_SELECTED_LANGUAGE(IZoneConnection conn, Packet packet)
 		{
-			var language = packet.GetShort();
+			var language = (Language)packet.GetShort();
 
-			// 0 = English, 1 = German, 2 = Portugese,
-			// 4 = Indonesian, 5 = Russian, 6 = Thai
+			if (!Enum.IsDefined(typeof(Language), language))
+			{
+				Log.Warning("CZ_SELECTED_LANGUAGE: Invalid language '{0}' received from '{1}'.", language, conn.Account.Name);
+				return;
+			}
+
+			conn.Account.Language = language.ToString();
+			conn.SelectedLanguage = conn.Account.Language;
 		}
 
 		/// <summary>
@@ -4951,7 +4981,7 @@ namespace Melia.Zone.Network
 				shop.IsClosed = true;
 				Send.ZC_AUTOSELLER_LIST(conn, character);
 				Send.ZC_AUTOSELLER_TITLE(character);
-				Send.ZC_NORMAL.ShopAnimation(conn, character, "Squire_Repair", 1, 0);
+				Send.ZC_NORMAL.ShopAnimation(character, "Squire_Repair", 1, 0);
 				character.Connection.ShopCreated = null;
 			}
 			else
@@ -5139,7 +5169,7 @@ namespace Melia.Zone.Network
 				character.Connection.ShopCreated = shop;
 				Send.ZC_AUTOSELLER_LIST(conn, character);
 				Send.ZC_NORMAL.Shop_Unknown11C(conn, "Squire", shop.Type);
-				Send.ZC_NORMAL.ShopAnimation(conn, character, "Squire_Repair", 1, 1);
+				Send.ZC_NORMAL.ShopAnimation(character, "Squire_Repair", 1, 1);
 				Send.ZC_AUTOSELLER_TITLE(character);
 
 				Log.Debug("CZ_REGISTER_AUTOSELLER: {0}, {1} item(s), Type: {2}", shopName, itemCount, shop.Type);
@@ -5175,6 +5205,7 @@ namespace Melia.Zone.Network
 			}
 
 			var shop = conn.ActiveShop = shopOwner.Connection.ShopCreated;
+			conn.ActiveShopOwnerHandle = shopOwner.Handle;
 
 			for (var i = 0; i < itemCount; i++)
 			{
@@ -5220,6 +5251,7 @@ namespace Melia.Zone.Network
 			}
 
 			var shop = conn.ActiveShop = shopOwner.Connection.ShopCreated;
+			conn.ActiveShopOwnerHandle = shopOwner.Handle;
 
 			// ============================================================
 			// BUYSHOP (IsCustom=false) - Visitor wants to SELL items TO shop owner
@@ -5324,6 +5356,7 @@ namespace Melia.Zone.Network
 			}
 
 			conn.ActiveShop = null;
+			conn.ActiveShopOwnerHandle = 0;
 			Send.ZC_ENABLE_CONTROL(conn, "AUTOSELLER", true);
 			Send.ZC_LOCK_KEY(character, "AUTOSELLER", false);
 			switch (shopType)
@@ -5608,6 +5641,9 @@ namespace Melia.Zone.Network
 			var position = packet.GetPosition();
 
 			var character = conn.SelectedCharacter;
+
+			if (character.IsWarping)
+				return;
 
 			if (character.Map.TryGetActor(handle, out var actor) && actor is ISubActor subActor)
 			{
@@ -6334,6 +6370,7 @@ namespace Melia.Zone.Network
 				return;
 			}
 			character.JobId = jobId;
+			Send.ZC_NORMAL.UpdateSkillUI(character);
 			character.AddonMessage(AddonMessage.UPDATE_REPRESENTATION_CLASS_ICON, "None", (int)jobId);
 		}
 
@@ -6528,6 +6565,141 @@ namespace Melia.Zone.Network
 		public void CZ_REQ_CancelGachaCube(IZoneConnection conn, Packet packet)
 		{
 			// Tracking Gacha Cube Opening?
+		}
+
+		/// <summary>
+		/// Sent when the player confirms a briquetting (weapon appearance
+		/// change) at the blacksmith.
+		/// </summary>
+		/// <param name="conn"></param>
+		/// <param name="packet"></param>
+		[PacketHandler(Op.CZ_BRIQUET)]
+		public void CZ_BRIQUET(IZoneConnection conn, Packet packet)
+		{
+			var size = packet.GetShort();
+			var targetWorldId = packet.GetLong();
+			var sourceWorldId = packet.GetLong();
+
+			var character = conn.SelectedCharacter;
+
+			// Get target item (the weapon whose appearance will change)
+			var targetItem = character.Inventory.GetItem(targetWorldId);
+			if (targetItem == null)
+			{
+				Log.Warning("CZ_BRIQUET: User '{0}' tried to briquet with a non-existent target item.", conn.Account.Name);
+				return;
+			}
+
+			// Get source item (the appearance source, will be consumed)
+			var sourceItem = character.Inventory.GetItem(sourceWorldId);
+			if (sourceItem == null)
+			{
+				Log.Warning("CZ_BRIQUET: User '{0}' tried to briquet with a non-existent source item.", conn.Account.Name);
+				return;
+			}
+
+			// Calculate silver cost (scales by item level and grade)
+			var lv = (double)targetItem.UseLevel;
+			var grade = Math.Min(5, (int)targetItem.Properties.GetFloat(PropertyName.ItemGrade));
+			var silverCost = (int)(lv * 100 + Math.Floor(Math.Pow(lv, 1.6) * grade * (lv / (6 - grade))));
+
+			if (!character.HasSilver(silverCost))
+			{
+				character.ServerMessage(Localization.Get("Not enough silver for appearance change."));
+				return;
+			}
+
+			// Consume the appearance source item and silver
+			character.Inventory.Remove(sourceItem, 1, InventoryItemRemoveMsg.Given);
+			character.Inventory.Remove(ItemId.Silver, silverCost, InventoryItemRemoveMsg.Given);
+
+			// Set the briquetting appearance on the target item
+			targetItem.Properties.SetFloat(PropertyName.BriquettingIndex, sourceItem.Id);
+
+			// Update item properties to client
+			Send.ZC_OBJECT_PROPERTY(character.Connection, targetItem);
+
+			// Send success addon message (argNum = appearance source class id for result popup)
+			Send.ZC_ADDON_MSG(character, "SUCCESS_BRIQUETTING", sourceItem.Id, targetWorldId.ToString());
+
+			// Broadcast appearance update so other players see the change
+			Send.ZC_UPDATED_PCAPPEARANCE(character);
+		}
+
+		/// <summary>
+		/// Client requests the current balance for a property-shop point
+		/// (e.g. Mercenary Badge count).
+		/// </summary>
+		/// <param name="conn"></param>
+		/// <param name="packet"></param>
+		[PacketHandler(Op.CZ_SHOP_POINT_GET)]
+		public void CZ_SHOP_POINT_GET(IZoneConnection conn, Packet packet)
+		{
+			// Packet body (fixed size 54): padding + 32-byte point name + tail
+			packet.GetBin(12);
+			var pointName = packet.GetString(32);
+
+			var character = conn.SelectedCharacter;
+
+			// Find the shop that uses this point name, read its currency property
+			var shop = Scripting.PropertyShops.FindByPointName(pointName);
+			if (shop == null)
+				return;
+
+			var balance = (int)character.Connection.Account.Properties.GetFloat(shop.CurrencyProperty);
+			Send.ZC_SHOP_POINT_UPDATE(conn, pointName, balance);
+		}
+
+		/// <summary>
+		/// Client is buying an item from a property/point shop (e.g. Mercenary
+		/// Badge Shop). The server looks up the shop+product and deducts the
+		/// currency item.
+		/// </summary>
+		/// <param name="conn"></param>
+		/// <param name="packet"></param>
+		[PacketHandler(Op.CZ_BUY_PROPERTYSHOP_ITEM)]
+		public void CZ_BUY_PROPERTYSHOP_ITEM(IZoneConnection conn, Packet packet)
+		{
+			var size = packet.GetShort();
+			var shopName = packet.GetString(32);
+			var count = packet.GetInt();
+			var productIndex = packet.GetInt();
+			var amount = packet.GetInt();
+
+			var character = conn.SelectedCharacter;
+
+			if (!Scripting.PropertyShops.TryGet(shopName, out var shop))
+			{
+				Log.Warning("CZ_BUY_PROPERTYSHOP_ITEM: User '{0}' tried to buy from unknown shop '{1}'.", conn.Account.Name, shopName);
+				return;
+			}
+
+			if (amount <= 0)
+				amount = 1;
+
+			if (productIndex < 0 || productIndex >= shop.Items.Count)
+			{
+				Log.Warning("CZ_BUY_PROPERTYSHOP_ITEM: User '{0}' tried to buy invalid product index {1} from '{2}'.", conn.Account.Name, productIndex, shopName);
+				return;
+			}
+
+			var product = shop.Items[productIndex];
+			var totalCost = product.Price * amount;
+
+			var properties = character.Connection.Account.Properties;
+			var currentBalance = (int)properties.GetFloat(shop.CurrencyProperty);
+			if (currentBalance < totalCost)
+			{
+				character.ServerMessage(Localization.Get("Not enough Mercenary Badges."));
+				return;
+			}
+
+			character.ModifyAccountProperty(shop.CurrencyProperty, -totalCost);
+			character.Inventory.Add(product.ItemId, product.Amount * amount, InventoryAddType.Buy);
+
+			// Refresh the balance in the UI
+			var balance = (int)properties.GetFloat(shop.CurrencyProperty);
+			Send.ZC_SHOP_POINT_UPDATE(conn, shop.PointName, balance);
 		}
 	}
 }

@@ -4,11 +4,15 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading;
+using CodingSeb.ExpressionEvaluator;
 using Melia.Shared.Configuration;
 using Melia.Shared.Data;
 using Melia.Shared.Data.Database;
@@ -150,12 +154,14 @@ namespace Melia.Shared
 			var serverLanguage = conf.Localization.Language;
 			var relativeFolderPath = "localization";
 			var systemFolderPath = Path.Combine("system", relativeFolderPath);
-			var userFolderPath = Path.Combine("system", relativeFolderPath);
+			var userFolderPath = Path.Combine("user", relativeFolderPath);
 
 			Log.Info("Loading localization...");
 
-			// Load everything from user first, then check system, without
-			// overriding the ones loaded from user
+			// Load in 3-tier order: user → packages → system.
+			// User overrides take highest priority, then packages,
+			// then system defaults. Files for the same language are
+			// merged together, with earlier entries taking precedence.
 			if (Directory.Exists(userFolderPath))
 			{
 				foreach (var filePath in Directory.EnumerateFiles(userFolderPath, "*.po", SearchOption.AllDirectories))
@@ -163,7 +169,22 @@ namespace Melia.Shared
 					var languageName = Path.GetFileNameWithoutExtension(filePath);
 					this.MultiLocalization.Load(languageName, filePath);
 
-					Log.Info("  loaded {0}.", languageName);
+					Log.Info("  loaded {0} (user).", languageName);
+				}
+			}
+
+			foreach (var package in this.Packages.Packages)
+			{
+				var packageLocalizationPath = Path.Combine(package.Directory, relativeFolderPath);
+				if (!Directory.Exists(packageLocalizationPath))
+					continue;
+
+				foreach (var filePath in Directory.EnumerateFiles(packageLocalizationPath, "*.po", SearchOption.AllDirectories))
+				{
+					var languageName = Path.GetFileNameWithoutExtension(filePath);
+					this.MultiLocalization.Load(languageName, filePath);
+
+					Log.Info("  loaded {0} ({1}).", languageName, package.Name);
 				}
 			}
 
@@ -172,12 +193,9 @@ namespace Melia.Shared
 				foreach (var filePath in Directory.EnumerateFiles(systemFolderPath, "*.po", SearchOption.AllDirectories))
 				{
 					var languageName = Path.GetFileNameWithoutExtension(filePath);
-					if (this.MultiLocalization.Contains(languageName))
-						continue;
-
 					this.MultiLocalization.Load(languageName, filePath);
 
-					Log.Info("  loaded {0}.", languageName);
+					Log.Info("  loaded {0} (system).", languageName);
 				}
 			}
 
@@ -188,7 +206,7 @@ namespace Melia.Shared
 			// US english.
 			if (!this.MultiLocalization.Contains(serverLanguage))
 			{
-				if (serverLanguage != "en-US")
+				if (serverLanguage != "English")
 					Log.Warning("Localization file '{0}.po' not found.", serverLanguage);
 			}
 			else
@@ -207,7 +225,7 @@ namespace Melia.Shared
 			try
 			{
 				Log.Info("Initializing database...");
-				db.Init(conf.Database.Host, conf.Database.User, conf.Database.Pass, conf.Database.Db);
+				db.Init(conf.Database.Host, conf.Database.Port, conf.Database.User, conf.Database.Pass, conf.Database.Db);
 			}
 			catch (Exception ex)
 			{
@@ -264,6 +282,7 @@ namespace Melia.Shared
 					this.LoadDb(this.Data.AchievementPointDb, "db/achievement_points.txt");
 					this.LoadDb(this.Data.BarrackDb, "db/barracks.txt");
 					this.LoadDb(this.Data.BuffDb, "db/buffs.txt");
+					this.LoadDb(this.Data.BuffOverrideDb, "db/buffs_overrides.txt");
 					this.LoadDb(this.Data.CabinetDb, "db/cabinet_items.txt");
 					this.LoadDb(this.Data.ChatEmoticonDb, "db/chat_emoticons.txt");
 					this.LoadDb(this.Data.ChatMacroDb, "db/chatmacros.txt");
@@ -332,11 +351,13 @@ namespace Melia.Shared
 				else if (serverType == ServerType.Social)
 				{
 					this.LoadDb(this.Data.PropertiesDb, "db/properties.txt");
+					this.LoadDb(this.Data.MapDb, "db/maps.txt");
 					this.LoadDb(this.Data.ServerDb, "db/servers.txt");
 					this.LoadDb(this.Data.SystemMessageDb, "db/system_messages.txt");
 				}
 				else if (serverType == ServerType.Web)
 				{
+					this.LoadDb(this.Data.MapDb, "db/maps.txt");
 					this.LoadDb(this.Data.ServerDb, "db/servers.txt");
 					this.LoadDb(this.Data.InvBaseIdDb, "db/invbaseids.txt");
 					this.LoadDb(this.Data.ItemDb, "db/items.txt");
@@ -357,6 +378,7 @@ namespace Melia.Shared
 					this.LoadDb(this.Data.AchievementPointDb, "db/achievement_points.txt");
 					this.LoadDb(this.Data.BarrackDb, "db/barracks.txt");
 					this.LoadDb(this.Data.BuffDb, "db/buffs.txt");
+					this.LoadDb(this.Data.BuffOverrideDb, "db/buffs_overrides.txt");
 					this.LoadDb(this.Data.CabinetDb, "db/cabinet_items.txt");
 					this.LoadDb(this.Data.ChatEmoticonDb, "db/chat_emoticons.txt");
 					this.LoadDb(this.Data.ChatMacroDb, "db/chatmacros.txt");
@@ -417,8 +439,9 @@ namespace Melia.Shared
 
 					this.LoadCustomDb(this.Data.ItemIconDb, "user/tools/lada/db/item_icons.txt");
 					this.LoadCustomDb(this.Data.MonsterIconDb, "user/tools/lada/db/monster_icons.txt");
-				}
 
+					this.Data.MonsterDb.BuildIndexes();
+				}
 			}
 			catch (DatabaseErrorException ex)
 			{
@@ -815,6 +838,45 @@ namespace Melia.Shared
 		protected void LoadServerList(ServerDb serverDb, ServerType serverType, int groupId, int serverId)
 		{
 			Log.Info("Loading server list...");
+
+			// Resolve host names
+			foreach (var serverData in this.Data.ServerDb.Entries.Values.SelectMany(a => a.Servers))
+			{
+				var host = serverData.Ip;
+				var ipResult = IpAddressUtil.TryResolve(host, out var ip);
+				switch (ipResult)
+				{
+					case ResolveResult.Resolved:
+						serverData.Ip = ip;
+						Log.Info("  resolved hostname '{0}' for '{1}:{2}' to '{3}'.", host, serverData.Type, serverData.Id, ip);
+						break;
+					case ResolveResult.Fail:
+						Log.Warning("  failed to resolve hostname '{0}' for '{1}:{2}'.", host, serverData.Type, serverData.Id);
+						break;
+					case ResolveResult.Error:
+						Log.Warning("  failed to resolve hostname '{0}' for '{1}:{2}'.", host, serverData.Type, serverData.Id);
+						break;
+				}
+
+				if (string.IsNullOrWhiteSpace(serverData.InterHost))
+					continue;
+
+				var interHost = serverData.InterHost;
+				var interResult = IpAddressUtil.TryResolve(interHost, out var interIp);
+				switch (interResult)
+				{
+					case ResolveResult.Resolved:
+						serverData.InterHost = interIp;
+						Log.Info("  resolved hostname '{0}' for '{1}:{2}' to '{3}'.", interHost, serverData.Type, serverData.Id, interIp);
+						break;
+					case ResolveResult.Fail:
+						Log.Warning("  failed to resolve hostname '{0}' for '{1}:{2}'.", interHost, serverData.Type, serverData.Id);
+						break;
+					case ResolveResult.Error:
+						Log.Warning("  failed to resolve hostname '{0}' for '{1}:{2}'.", interHost, serverData.Type, serverData.Id);
+						break;
+				}
+			}
 
 			this.ServerList.Load(serverDb, groupId);
 			this.ServerInfo = this.GetServerInfo(serverType, serverId);

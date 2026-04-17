@@ -1,12 +1,37 @@
+local _searchText = ""
+
+function M_QUESTS_SET_SEARCH(text)
+	_searchText = string.lower(text or "")
+	M_QUESTS_UPDATE_LIST()
+end
+
 function M_QUESTS_DRAW_LIST(frame, quests)
 	local x = 10
 	local y = 0
-	
+
 	frame:DeleteAllControl()
+
+	local filters = GET_QUEST_MODE_OPTION()
 
 	for i = 1, #quests do
 		local quest = quests[i]
-		y = y + M_QUESTS_DRAW_QUEST(frame, quest, i, x, y)
+
+		local filtered = filters[quest.Type] == false
+		if quest.Tracked and filters["Chase"] ~= true then
+			filtered = true
+		end
+
+		if not filtered and _searchText ~= "" then
+			local name = string.lower(quest.Name or "")
+			local location = string.lower(quest.Location or "")
+			if not string.find(name, _searchText, 1, true) and not string.find(location, _searchText, 1, true) then
+				filtered = true
+			end
+		end
+
+		if not filtered then
+			y = y + M_QUESTS_DRAW_QUEST(frame, quest, i, x, y)
+		end
 	end
 
 	frame:Invalidate()

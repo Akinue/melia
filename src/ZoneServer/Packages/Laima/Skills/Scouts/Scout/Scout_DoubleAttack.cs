@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using Melia.Shared.Packages;
 using Melia.Shared.Game.Const;
 using Melia.Shared.L10N;
@@ -6,6 +6,7 @@ using Melia.Shared.World;
 using Melia.Zone.Buffs;
 using Melia.Zone.Network;
 using Melia.Zone.Skills.Handlers.Base;
+using Melia.Zone.Scripting;
 using Melia.Zone.World.Actors;
 
 namespace Melia.Zone.Skills.Handlers.Scouts.Scout
@@ -15,7 +16,7 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Scout
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Scout_DoubleAttack)]
-	public class Scout_DoubleAttackOverride : IMeleeGroundSkillHandler
+	public class Scout_DoubleAttackOverride : IGroundSkillHandler
 	{
 		/// <summary>
 		/// Handles skill, applying a buff to the caster.
@@ -24,7 +25,7 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Scout
 		/// <param name="caster"></param>
 		/// <param name="originPos"></param>
 		/// <param name="dir"></param>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -38,13 +39,10 @@ namespace Melia.Zone.Skills.Handlers.Scouts.Scout
 			var duration = TimeSpan.FromSeconds(300);
 			var doubleHitChance = 25f + skill.Level * 5f;
 
-			var byAbility = 1f;
-			if (caster.TryGetActiveAbilityLevel(AbilityId.Scout21, out var abilityLevel))
-				byAbility += abilityLevel * 0.005f;
+			var SCR_Get_AbilityReinforceRate = ScriptableFunctions.Skill.Get("SCR_Get_AbilityReinforceRate");
+			doubleHitChance *= 1f + SCR_Get_AbilityReinforceRate(skill);
 
-			doubleHitChance *= byAbility;
-
-			caster.StartBuff(BuffId.DoubleAttack_Buff, skill.Level, doubleHitChance, duration, caster);
+			caster.StartBuff(BuffId.DoubleAttack_Buff, skill.Level, doubleHitChance, duration, caster, skill.Id);
 
 			Send.ZC_SKILL_MELEE_GROUND(caster, skill, originPos);
 		}

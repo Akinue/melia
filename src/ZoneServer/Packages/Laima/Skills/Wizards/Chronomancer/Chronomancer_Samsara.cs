@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Melia.Shared.Game.Const;
@@ -6,6 +6,7 @@ using Melia.Shared.L10N;
 using Melia.Shared.Packages;
 using Melia.Shared.World;
 using Melia.Zone.Network;
+using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.AI;
 using Melia.Zone.Skills.Handlers.Base;
 using Melia.Zone.World.Actors;
@@ -18,12 +19,12 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Chronomancer
 {
 	[Package("laima")]
 	[SkillHandler(SkillId.Chronomancer_Samsara)]
-	public class Chronomancer_SamsaraOverride : IMeleeGroundSkillHandler
+	public class Chronomancer_SamsaraOverride : IGroundSkillHandler
 	{
 		private const string VarReincarnated = "Melia.Skill.Samsara.Reincarnated";
 		private const string VarCreatedBySamsara = "Melia.Skill.Samsara.Created";
 
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -43,19 +44,26 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Chronomancer
 			Send.ZC_NORMAL.UpdateSkillEffect(caster, caster.Handle, caster.Position, caster.Direction, caster.Position);
 
 			var reincarnateChance = Math.Min(100f, 30f + 3f * skill.Level);
-
 			var doubleCloneChance = 0f;
-			if (caster is Character character
-				&& character.TryGetActiveAbilityLevel(AbilityId.Chronomancer3, out var abilityLevel))
+
+			if (caster is Character character)
 			{
-				doubleCloneChance = abilityLevel * 0.5f;
+				var SCR_Get_AbilityReinforceRate = ScriptableFunctions.Skill.Get("SCR_Get_AbilityReinforceRate");
+				reincarnateChance = Math.Min(100f, reincarnateChance * (1f + SCR_Get_AbilityReinforceRate(skill)));
+
+				if (character.TryGetActiveAbilityLevel(AbilityId.Chronomancer3, out var doubleLevel))
+					doubleCloneChance = doubleLevel * 0.5f;
 			}
+
+			// Mark all targets as reincarnated immediately to prevent
+			// multiple Chronomancers from reincarnating the same mobs
+			// due to a TOCTOU race between GetDeadEnemies and the loop.
+			foreach (var deadMob in deadTargets)
+				deadMob.Vars.SetBool(VarReincarnated, true);
 
 			Send.ZC_SYNC_START(caster, skillHandle, 1);
 			foreach (var deadMob in deadTargets)
 			{
-				deadMob.Vars.SetBool(VarReincarnated, true);
-
 				if (RandomProvider.Next(1, 101) > reincarnateChance)
 					continue;
 
@@ -106,6 +114,10 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Chronomancer
 				&& caster.CheckRelation(mob, RelationType.Enemy)
 				&& !mob.Vars.GetBool(VarReincarnated)
 				&& !mob.Vars.GetBool(VarCreatedBySamsara)
+				&& mob.Rank != MonsterRank.Boss
+				&& mob.Rank != MonsterRank.MISC
+				&& mob.Rank != MonsterRank.Material
+				&& mob.Rank != MonsterRank.NPC
 			);
 
 			return deadMobs.Take(maxTargets).ToList();

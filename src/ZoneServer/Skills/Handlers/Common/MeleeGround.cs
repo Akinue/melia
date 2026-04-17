@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Melia.Shared.Game.Const;
@@ -11,7 +11,6 @@ using Melia.Zone.World.Actors;
 using Yggdrasil.Util;
 using static Melia.Zone.Skills.SkillUseFunctions;
 using Melia.Zone.World.Actors.Characters;
-using System.Linq;
 
 namespace Melia.Zone.Skills.Handlers.Common
 {
@@ -30,7 +29,7 @@ namespace Melia.Zone.Skills.Handlers.Common
 		/// <param name="originPos"></param>
 		/// <param name="farPos"></param>
 		/// <param name="targets"></param>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, IList<ICombatEntity> targets)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -43,8 +42,8 @@ namespace Melia.Zone.Skills.Handlers.Common
 
 			Send.ZC_SKILL_MELEE_GROUND(caster, skill, farPos);
 
-			if (caster is Character character && Feature.IsEnabled("BattleManager"))
-				ZoneServer.Instance.World.BattleManager.StartBattle(character, targets.FirstOrDefault());
+			if (caster is Character character && Feature.IsEnabled("BattleManager") && targets.Count > 0)
+				ZoneServer.Instance.World.BattleManager.StartBattle(character, targets[0]);
 
 			skill.Run(this.Attack(skill, caster, originPos, farPos, targets));
 		}
@@ -57,7 +56,7 @@ namespace Melia.Zone.Skills.Handlers.Common
 		/// <param name="castPosition"></param>
 		/// <param name="targetPosition"></param>
 		/// <param name="targets"></param>
-		private async Task Attack(Skill skill, ICombatEntity caster, Position castPosition, Position targetPosition, IEnumerable<ICombatEntity> targets)
+		private async Task Attack(Skill skill, ICombatEntity caster, Position castPosition, Position targetPosition, IList<ICombatEntity> targets)
 		{
 			// Based on Normal_Attack posessing a hit delay of 100ms,
 			// and Common_DaggerAries one of 50ms, and these two values
@@ -84,6 +83,9 @@ namespace Melia.Zone.Skills.Handlers.Common
 
 			foreach (var target in targets)
 			{
+				if (target == null)
+					continue;
+
 				var modifier = SkillModifier.Default;
 
 				// Random chance to trigger double hit with dagger while buff is active
@@ -101,10 +103,11 @@ namespace Melia.Zone.Skills.Handlers.Common
 				// the official behavior is, because it kind of looks
 				// correct there for me, but that might very well be
 				// the lag at play...
+				var hitAniTime = aniTime;
 				if (skillHitResult.HitCount > 1)
-					aniTime = TimeSpan.FromMilliseconds(aniTime.TotalMilliseconds / skillHitResult.HitCount);
+					hitAniTime = TimeSpan.FromMilliseconds(aniTime.TotalMilliseconds / skillHitResult.HitCount);
 
-				var skillHit = new SkillHitInfo(caster, target, skill, skillHitResult, aniTime, skillHitDelay);
+				var skillHit = new SkillHitInfo(caster, target, skill, skillHitResult, hitAniTime, skillHitDelay);
 				hits.Add(skillHit);
 			}
 

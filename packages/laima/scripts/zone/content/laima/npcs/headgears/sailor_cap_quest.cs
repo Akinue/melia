@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.Dialogues;
 using Melia.Zone.World.Actors.Characters;
@@ -22,6 +22,7 @@ public class SailorCapQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -57,8 +58,6 @@ public class SailorCapQuestScript : QuestScript
 			{
 				if (player.Inventory.HasItem(FerretFurId, 250))
 				{
-					player.Inventory.RemoveItem(FerretFurId, 250);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("*expertly crafts the cap* Ah, perfect! *holds it up proudly* Now THIS is a proper sailor's cap! The ferret fur gives it that sturdy yet comfortable feel we always valued out at sea."));
 
@@ -93,5 +92,10 @@ public class SailorCapQuestScript : QuestScript
 		{
 			await dialog.Msg(L("*returns to adjusting his cap* No rush, the sea teaches us patience after all... Come back when you're ready to learn about real sailing gear!"));
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(FerretFurId, 250);
 	}
 }

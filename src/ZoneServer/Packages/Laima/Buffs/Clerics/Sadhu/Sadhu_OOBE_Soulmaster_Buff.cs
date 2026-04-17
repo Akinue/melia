@@ -5,6 +5,7 @@ using Melia.Shared.Data.Database;
 using Melia.Shared.Game.Const;
 using Melia.Zone.Buffs.Base;
 using Melia.Zone.Network;
+using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.ScriptableEvents;
 using Melia.Zone.Skills.Combat;
 using Melia.Zone.Skills;
@@ -37,18 +38,15 @@ namespace Melia.Zone.Buffs.Handlers.Clerics.Sadhu
 
 			Send.ZC_NORMAL.SetMainAttackSkill(casterCharacter, SkillId.Sadhu_EctoplasmAttack);
 
-			var dummyHandle = (int)buff.NumArg2;
-			if (!casterCharacter.Map.TryGetCharacter(dummyHandle, out var dummyCharacter))
+			var dummy = this.GetDummy(casterCharacter);
+			if (dummy == null)
 				return;
 
-			if (dummyCharacter is DummyCharacter dummy)
-			{
-				dummy.MirrorDamageToOwner = true;
-				dummy.SyncHpFromOwner();
-				dummy.Died += this.OnDummyDied;
-			}
+			dummy.MirrorDamageToOwner = true;
+			dummy.SyncHpFromOwner();
+			dummy.Died += this.OnDummyDied;
 
-			this.CreateLinkEffect(casterCharacter, dummyHandle);
+			this.CreateLinkEffect(casterCharacter, dummy.Handle);
 		}
 
 		public override void WhileActive(Buff buff)
@@ -66,12 +64,7 @@ namespace Melia.Zone.Buffs.Handlers.Clerics.Sadhu
 			if (buff.Caster is not Character casterCharacter)
 				return;
 
-			var dummyHandle = (int)buff.NumArg2;
-			if (!casterCharacter.Map.TryGetCharacter(dummyHandle, out var dummyCharacter))
-				return;
-
-			if (dummyCharacter is DummyCharacter dummy)
-				dummy.SyncHpFromOwner();
+			this.GetDummy(casterCharacter)?.SyncHpFromOwner();
 		}
 
 		/// <summary>
@@ -105,14 +98,15 @@ namespace Melia.Zone.Buffs.Handlers.Clerics.Sadhu
 			this.RecoverSp(casterCharacter, buff);
 
 			Send.ZC_NORMAL.SetMainAttackSkill(casterCharacter, SkillId.None);
-			Send.ZC_NORMAL.SetActorColor(casterCharacter, 255, 255, 255, 255, 0.01f);
 			Send.ZC_PLAY_SOUND(casterCharacter, "skl_eff_yuchae_end_2");
 
 			if (ZoneServer.Instance.Data.BuffDb.TryFind(BuffId.OOBE_Soulmaster_Buff, out var buffData))
 				Send.ZC_NORMAL.RemoveBuff(casterCharacter, buffData.ClassName);
 
 			this.RemoveLinkEffect(casterCharacter);
-			this.ReturnToBody(casterCharacter, (int)buff.NumArg2);
+			this.ReturnToBody(casterCharacter);
+
+			Send.ZC_NORMAL.SetActorColor(casterCharacter, 255, 255, 255, 255, 0.01f);
 		}
 
 		/// <summary>
@@ -132,8 +126,11 @@ namespace Melia.Zone.Buffs.Handlers.Clerics.Sadhu
 
 			var recoveryRate = 0.30f + 0.03f * prakritiLevel;
 
-			if (character.TryGetActiveAbilityLevel(AbilityId.Sadhu40, out var abilityLevel))
-				recoveryRate *= 1f + abilityLevel * 0.005f;
+			if (character.TryGetSkill(SkillId.Sadhu_Prakriti, out var prakritiSkill))
+			{
+				var SCR_Get_AbilityReinforceRate = ScriptableFunctions.Skill.Get("SCR_Get_AbilityReinforceRate");
+				recoveryRate *= 1f + SCR_Get_AbilityReinforceRate(prakritiSkill);
+			}
 
 			recoveryRate = Math.Min(1.0f, recoveryRate);
 			var spRecovery = (int)(spLost * recoveryRate);
@@ -143,28 +140,35 @@ namespace Melia.Zone.Buffs.Handlers.Clerics.Sadhu
 		}
 
 		/// <summary>
+		/// Returns the dummy body for the given character, or null
+		/// if not found.
+		/// </summary>
+		private DummyCharacter GetDummy(Character character)
+		{
+			return character.Map.GetCharacter(c => c is DummyCharacter d && d.Owner == character) as DummyCharacter;
+		}
+
+		/// <summary>
 		/// Makes the character return to the dummy body position.
 		/// </summary>
-		private void ReturnToBody(Character character, int dummyHandle)
+		private void ReturnToBody(Character character)
 		{
-			if (!character.Map.TryGetCharacter(dummyHandle, out var dummyCharacter))
+			var dummy = this.GetDummy(character);
+			if (dummy == null)
 				return;
 
-			character.Position = dummyCharacter.Position;
-			character.Direction = dummyCharacter.Direction;
+			character.Position = dummy.Position;
+			character.Direction = dummy.Direction;
 
-			if (dummyCharacter is DummyCharacter dummy)
-			{
-				dummy.Died -= this.OnDummyDied;
-				dummy.MirrorDamageToOwner = false;
-			}
+			dummy.Died -= this.OnDummyDied;
+			dummy.MirrorDamageToOwner = false;
 
 			Send.ZC_ROTATE(character);
-			Send.ZC_SET_POS(character, dummyCharacter.Position);
-			Send.ZC_OWNER(character, dummyCharacter);
-			Send.ZC_LEAVE(dummyCharacter);
+			Send.ZC_SET_POS(character, dummy.Position);
+			Send.ZC_OWNER(character, dummy);
+			Send.ZC_LEAVE(dummy);
 
-			character.Map.RemoveCharacter(dummyCharacter);
+			character.Map.RemoveCharacter(dummy);
 		}
 
 		/// <summary>
@@ -193,13 +197,13 @@ namespace Melia.Zone.Buffs.Handlers.Clerics.Sadhu
 			if (buff.Caster is not Character casterCharacter)
 				return;
 
-			var dummyHandle = (int)buff.NumArg2;
-			if (!casterCharacter.Map.TryGetCharacter(dummyHandle, out var dummyCharacter))
+			var dummy = this.GetDummy(casterCharacter);
+			if (dummy == null)
 				return;
 
 			var maxDistance = 180f + buff.NumArg1 * 20f;
 
-			var distance = casterCharacter.Position.Get2DDistance(dummyCharacter.Position);
+			var distance = casterCharacter.Position.Get2DDistance(dummy.Position);
 			if (distance > maxDistance)
 				casterCharacter.StopBuff(buff.Id);
 		}

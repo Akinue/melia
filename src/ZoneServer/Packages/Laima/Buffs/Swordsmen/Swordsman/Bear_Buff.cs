@@ -3,10 +3,10 @@ using Melia.Shared.Packages;
 using Melia.Shared.Game.Const;
 using Melia.Zone.Buffs.Base;
 using Melia.Zone.Scripting.ScriptableEvents;
+using Melia.Zone.Scripting;
 using Melia.Zone.Skills;
 using Melia.Zone.Skills.Combat;
 using Melia.Zone.World.Actors;
-using Yggdrasil.Logging;
 
 namespace Melia.Zone.Buffs.HandlersOverrides.Swordsmen.Swordsman
 {
@@ -17,8 +17,8 @@ namespace Melia.Zone.Buffs.HandlersOverrides.Swordsmen.Swordsman
 	[BuffHandler(BuffId.Bear_Buff)]
 	public class Bear_BuffOverride : BuffHandler
 	{
-		private const float DamageReductionPerLevel = 0.03f;
-		private const float AbilityBonus = 0.005f;
+		private const float BaseDamageReduction = 0.075f;
+		private const float DamageReductionPerLevel = 0.015f;
 
 		/// <summary>
 		/// Applies the buff's effect during the combat calculations.
@@ -35,13 +35,13 @@ namespace Melia.Zone.Buffs.HandlersOverrides.Swordsmen.Swordsman
 				return;
 
 			var skillLevel = buff.NumArg1;
-			var multiplierReduction = skillLevel * DamageReductionPerLevel;
+			var multiplierReduction = BaseDamageReduction + skillLevel * DamageReductionPerLevel;
 
-			var byAbility = 0f;
-			if (buff.Target.TryGetActiveAbilityLevel(AbilityId.Swordman30, out var abilityLevel))
-				byAbility = abilityLevel * AbilityBonus;
-
-			multiplierReduction *= 1f + byAbility;
+			if (buff.Caster is ICombatEntity casterEntity && casterEntity.TryGetSkill(buff.SkillId, out var buffSkill))
+			{
+				var SCR_Get_AbilityReinforceRate = ScriptableFunctions.Skill.Get("SCR_Get_AbilityReinforceRate");
+				multiplierReduction *= 1f + SCR_Get_AbilityReinforceRate(buffSkill);
+			}
 
 			multiplierReduction = Math.Min(0.80f, multiplierReduction);
 
@@ -49,7 +49,7 @@ namespace Melia.Zone.Buffs.HandlersOverrides.Swordsmen.Swordsman
 			// calculations, on AfterBonuses, but setting the multiplier seems
 			// much easier. Is this correct? Who knows.
 
-			modifier.DamageMultiplier -= multiplierReduction;
+			modifier.DamageMultiplier *= (1f - multiplierReduction);
 		}
 	}
 }

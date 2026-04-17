@@ -35,7 +35,7 @@ namespace Melia.Zone.World.Actors.Characters
 			var prevLevel = this.Job.Level;
 			var prevExp = this.Job.TotalExp;
 
-			this.Job.TotalExp = ZoneServer.Instance.Data.ExpDb.GetNextTotalJobExp(this.Jobs.GetCurrentRank(), prevLevel + amount - 1);
+			this.Job.TotalExp = ZoneServer.Instance.Data.ExpDb.GetNextTotalJobExp(this.Jobs.GetJobRank(this.JobId), prevLevel + amount - 1);
 
 			var expGained = (this.Job.TotalExp - prevExp);
 			var levelsGained = (this.Job.Level - prevLevel);
@@ -62,6 +62,7 @@ namespace Melia.Zone.World.Actors.Characters
 				this.FullHeal();
 
 			Send.ZC_OBJECT_PROPERTY(this);
+			Send.ZC_NORMAL.UpdateSkillUI(this);
 			this.AddonMessage("NOTICE_Dm_levelup_skill", "!@#$Auto_KeulLeSeu_LeBeli_SangSeungHayeossSeupNiDa#@!", 3);
 			this.PlayEffect("F_pc_joblevel_up", 3);
 			Send.ZC_SKILL_LIST(this);
@@ -87,7 +88,7 @@ namespace Melia.Zone.World.Actors.Characters
 			if (newLevel < 1)
 				newLevel = 1;
 
-			this.Job.TotalExp = ZoneServer.Instance.Data.ExpDb.GetNextTotalJobExp(this.Jobs.GetCurrentRank(), newLevel - 1);
+			this.Job.TotalExp = ZoneServer.Instance.Data.ExpDb.GetNextTotalJobExp(this.Jobs.GetJobRank(this.JobId), newLevel - 1);
 
 			var levelsLost = prevLevel - this.Job.Level;
 
@@ -117,6 +118,8 @@ namespace Melia.Zone.World.Actors.Characters
 		/// </summary>
 		public void ResetSkills()
 		{
+			var commonSkillChanged = false;
+
 			foreach (var skill in this.Skills.GetList())
 			{
 				var skillTree = ZoneServer.Instance.Data.SkillTreeDb.Find(skillTree => skillTree.SkillId == skill.Id);
@@ -124,12 +127,33 @@ namespace Melia.Zone.World.Actors.Characters
 					continue;
 
 				if (skill.LevelByDB > 0)
-					this.Skills.Remove(skill.Id);
+				{
+					var gemLevel = skill.Properties.GetFloat(PropertyName.GemLevel_BM, 0);
+					if (gemLevel > 0)
+					{
+						skill.LevelByDB = 0;
+						skill.IsCommon = true;
+						skill.Properties.InvalidateAll();
+						Send.ZC_OBJECT_PROPERTY(this.Connection, skill);
+						commonSkillChanged = true;
+					}
+					else
+					{
+						this.Skills.Remove(skill.Id);
+					}
+				}
 			}
 
 			foreach (var job in this.Jobs.GetList())
 			{
 				job.SetSkillPoints(job.Level);
+			}
+
+			if (commonSkillChanged)
+			{
+				Send.ZC_SKILL_LIST(this);
+				Send.ZC_COMMON_SKILL_LIST(this);
+				Send.ZC_NORMAL.UpdateSkillUI(this);
 			}
 		}
 
@@ -141,6 +165,8 @@ namespace Melia.Zone.World.Actors.Characters
 			if (!this.Jobs.TryGet(jobId, out var job))
 				return;
 
+			var commonSkillChanged = false;
+
 			foreach (var skill in this.Skills.GetList())
 			{
 				var skillTree = ZoneServer.Instance.Data.SkillTreeDb.Find(skillTree => skillTree.JobId == jobId && skillTree.SkillId == skill.Id);
@@ -148,10 +174,31 @@ namespace Melia.Zone.World.Actors.Characters
 					continue;
 
 				if (skill.LevelByDB > 0)
-					this.Skills.Remove(skill.Id);
+				{
+					var gemLevel = skill.Properties.GetFloat(PropertyName.GemLevel_BM, 0);
+					if (gemLevel > 0)
+					{
+						skill.LevelByDB = 0;
+						skill.IsCommon = true;
+						skill.Properties.InvalidateAll();
+						Send.ZC_OBJECT_PROPERTY(this.Connection, skill);
+						commonSkillChanged = true;
+					}
+					else
+					{
+						this.Skills.Remove(skill.Id);
+					}
+				}
 			}
 
 			job.SetSkillPoints(job.Level);
+
+			if (commonSkillChanged)
+			{
+				Send.ZC_SKILL_LIST(this);
+				Send.ZC_COMMON_SKILL_LIST(this);
+				Send.ZC_NORMAL.UpdateSkillUI(this);
+			}
 		}
 
 		/// <summary>
@@ -229,13 +276,6 @@ namespace Melia.Zone.World.Actors.Characters
 		/// </summary>
 		public void ChangeJob(JobId jobId, JobCircle circle, int skillPoints, bool playEffect = true)
 		{
-			// Store current levels of all existing jobs before adding the new one,
-			// because adding a job changes the rank which affects how TotalExp
-			// translates to Level (Level is calculated from TotalExp + rank)
-			var existingJobLevels = new Dictionary<JobId, int>();
-			foreach (var existingJob in this.Jobs.GetList())
-				existingJobLevels[existingJob.Id] = existingJob.Level;
-
 			var newJob = new Job(this, jobId, circle, skillPoints);
 			newJob.AdvancementDate = DateTime.Now;
 
@@ -244,18 +284,6 @@ namespace Melia.Zone.World.Actors.Characters
 
 			this.JobId = jobId;
 			this.Jobs.Add(newJob);
-
-			// After adding the job, the rank has increased. Recalculate TotalExp
-			// for all existing jobs to maintain their levels at the new rank.
-			var newRank = this.Jobs.GetCurrentRank();
-			foreach (var existingJob in this.Jobs.GetList())
-			{
-				if (existingJob.Id == jobId)
-					continue;
-
-				var targetLevel = existingJobLevels[existingJob.Id];
-				existingJob.TotalExp = ZoneServer.Instance.Data.ExpDb.GetNextTotalJobExp(newRank, targetLevel);
-			}
 
 			ZoneServer.Instance.ServerEvents.PlayerAdvancedJob.Raise(new PlayerEventArgs(this));
 
@@ -283,12 +311,12 @@ namespace Melia.Zone.World.Actors.Characters
 		protected static void InitCommon(Character character)
 		{
 			LearnSkill(character, SkillId.Default);
-			LearnSkill(character, SkillId.Common_shovel);
-			LearnSkill(character, SkillId.Common_otlflag);
-			LearnSkill(character, SkillId.Common_dumbbell);
-			LearnSkill(character, SkillId.Common_vuvuzela);
-			LearnSkill(character, SkillId.Common_snowspray);
-			LearnSkill(character, SkillId.Common_balloonpipe);
+			LearnCommonSkill(character, SkillId.Common_shovel);
+			LearnCommonSkill(character, SkillId.Common_otlflag);
+			LearnCommonSkill(character, SkillId.Common_dumbbell);
+			LearnCommonSkill(character, SkillId.Common_vuvuzela);
+			LearnCommonSkill(character, SkillId.Common_snowspray);
+			LearnCommonSkill(character, SkillId.Common_balloonpipe);
 
 			LearnAbility(character, AbilityId.Cloth);
 			LearnAbility(character, AbilityId.Leather);
@@ -394,6 +422,20 @@ namespace Melia.Zone.World.Actors.Characters
 				return;
 
 			var skill = new Skill(character, skillId, 1);
+			character.Skills.AddSilent(skill);
+		}
+
+		/// <summary>
+		/// Adds the skill to the character silently as a common skill if they
+		/// don't already have it and the skill exists in the database.
+		/// Common skills appear in the common skills tab.
+		/// </summary>
+		protected static void LearnCommonSkill(Character character, SkillId skillId)
+		{
+			if (character.Skills.Has(skillId) || !ZoneServer.Instance.Data.SkillDb.TryFind(skillId, out _))
+				return;
+
+			var skill = new Skill(character, skillId, 1, isCommon: true);
 			character.Skills.AddSilent(skill);
 		}
 

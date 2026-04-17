@@ -289,7 +289,7 @@ namespace Melia.Zone.Pads.Helpers
 
 			foreach (var actor in pad.Trigger.GetActors())
 			{
-				if (!caster.CheckRelation(actor, targetRelation) || actor is not ICombatEntity target)
+				if (!caster.CheckRelation(actor, targetRelation) || actor is not ICombatEntity target || target.IsDead)
 					continue;
 				if (target.IsBuffActive(checkBuff))
 					continue;
@@ -735,6 +735,8 @@ namespace Melia.Zone.Pads.Helpers
 		public static Buff AddPadBuff(ICombatEntity caster, ICombatEntity target, Pad pad, BuffId buffId, int arg1, int arg2, float time, int over, int rate = 0, int? fromWho = null)
 		{
 			if (pad.IsDead || caster == null)
+				return null;
+			if (target.Properties.GetString(PropertyName.HitProof, "NO") == "YES")
 				return null;
 			if (target.IsBuffActive(BuffId.Skill_NoDamage_Buff)
 				&& ZoneServer.Instance.Data.BuffDb.TryFind(buffId, out var buffData)

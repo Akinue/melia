@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Melia.Shared.Game.Const;
 using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.Dialogues;
@@ -7,6 +7,7 @@ using Melia.Zone.World.Quests;
 using Melia.Zone.World.Quests.Objectives;
 using Melia.Zone.World.Quests.Rewards;
 using static Melia.Zone.Scripting.Shortcuts;
+using Melia.Zone.World.Actors.Characters;
 
 public class GhostHeadbandQuestScript : QuestScript
 {
@@ -24,6 +25,7 @@ public class GhostHeadbandQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -60,9 +62,6 @@ public class GhostHeadbandQuestScript : QuestScript
 				if (player.Inventory.HasItem(BansheeSpriteMatterId, 75) &&
 					player.Inventory.HasItem(BansheeHoodId, 3))
 				{
-					player.Inventory.RemoveItem(BansheeSpriteMatterId, 75);
-					player.Inventory.RemoveItem(BansheeHoodId, 3);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("*the spirits swirl around you* Yes... YES! I can feel their essence! Take this headband, forged from my spiritual energy. May it serve you well... as you have served my vengeance."));
 				}
@@ -91,5 +90,11 @@ public class GhostHeadbandQuestScript : QuestScript
 			default:
 				break;
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(BansheeSpriteMatterId, 75);
+		character.Inventory.RemoveItem(BansheeHoodId, 3);
 	}
 }

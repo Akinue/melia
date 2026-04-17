@@ -7,6 +7,7 @@ using Melia.Zone.Network;
 using Melia.Zone.World.Actors.Characters;
 using Melia.Zone.World.Actors;
 using Melia.Zone.Skills.Handlers.Base;
+using Melia.Zone.Skills.Handlers.Bokor;
 using Melia.Zone.Skills.Combat;
 using Melia.Zone.World.Maps;
 using static Melia.Zone.Skills.SkillUseFunctions;
@@ -21,7 +22,7 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Bokor
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Bokor_Damballa)]
-	public class Bokor_DamballaOverride : IMeleeGroundSkillHandler
+	public class Bokor_DamballaOverride : IGroundSkillHandler
 	{
 		/// <summary>
 		/// Handles skill behavior
@@ -31,7 +32,7 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Bokor
 		/// <param name="originPos"></param>
 		/// <param name="farPos"></param>
 		/// <param name="targets"></param>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			var maxRange = skill.Properties.GetFloat(PropertyName.MaxR);
 
@@ -69,6 +70,14 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Bokor
 			Send.ZC_SKILL_MELEE_GROUND(caster, skill, farPos, forceId, null);
 
 			var summons = character.Summons.GetSummons();
+			var zombiesKilled = summons.Count;
+
+			// Cap respawn count by the CURRENT zombie type's max count so that
+			// switching abilities (e.g., kill 6 default zombies then respawn as
+			// giants which cap at 2) can never exceed the active cap.
+			var zombieInfo = ZombifyHelper.GetZombieInfo(caster);
+			var respawnCap = Math.Min(zombiesKilled, zombieInfo.MaxCount);
+			var killedEnemyPositions = new List<Position>();
 
 			foreach (var summon in summons)
 			{
@@ -77,16 +86,38 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Bokor
 
 				summon.Kill(caster);
 
-				foreach (var target in targetsToHit)
+				foreach (var t in targetsToHit)
 				{
-					var skillHitResult = SCR_SkillHit(caster, target, skill);
-					target.PlayEffect("F_rize004_dark_damballa", 5f, 0);
-					target.TakeDamage(skillHitResult.Damage, caster);
+					var skillHitResult = SCR_SkillHit(caster, t, skill);
+					t.PlayEffect("F_rize004_dark_damballa", 5f, 0);
+					t.TakeDamage(skillHitResult.Damage, caster);
 
-					var hitInfo = new HitInfo(caster, target, skill, skillHitResult.Damage, skillHitResult.Result);
+					var hitInfo = new HitInfo(caster, t, skill, skillHitResult.Damage, skillHitResult.Result);
 					hitInfo.AniTime = TimeSpan.FromMilliseconds(100);
 
-					Send.ZC_HIT_INFO(caster, target, hitInfo);
+					Send.ZC_HIT_INFO(caster, t, hitInfo);
+
+					if (t.IsDead && killedEnemyPositions.Count < respawnCap)
+						killedEnemyPositions.Add(t.Position);
+				}
+			}
+
+			// Respawn zombies on killed enemy corpses. Re-check the live summon
+			// count after the kills above (all bokor summons are now dead, but
+			// mixed-type remnants may still exist if the player recently switched
+			// abilities) and only fill up to the current zombie type's cap.
+			if (killedEnemyPositions.Count > 0 && caster.TryGetSkill(SkillId.Bokor_Zombify, out var zombifySkill))
+			{
+				if (ZoneServer.Instance.Data.MonsterDb.TryFind(zombieInfo.ClassName, out var monsterData))
+				{
+					var existingOfType = character.Summons.GetSummons(monsterData.Id).Count;
+					var remaining = zombieInfo.MaxCount - existingOfType;
+					var toSpawn = Math.Min(killedEnemyPositions.Count, remaining);
+
+					for (var i = 0; i < toSpawn; i++)
+					{
+						ZombifyHelper.SummonZombieAt(zombifySkill, caster, zombieInfo, killedEnemyPositions[i]);
+					}
 				}
 			}
 		}

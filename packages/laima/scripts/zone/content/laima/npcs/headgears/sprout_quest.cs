@@ -1,4 +1,4 @@
-﻿using System.Threading.Tasks;
+using System.Threading.Tasks;
 using Melia.Zone.Scripting;
 using Melia.Zone.Scripting.Dialogues;
 using Melia.Zone.World.Actors.Characters;
@@ -23,6 +23,7 @@ public class SproutQuestScript : QuestScript
 	{
 		SetId(QuestNamespace, QuestNumber);
 		SetName(QuestName);
+		SetType(QuestType.Repeat);
 		SetDescription(QuestDescription);
 		SetUnlock(QuestUnlockType.AllAtOnce);
 		SetCancelable(true);
@@ -59,9 +60,6 @@ public class SproutQuestScript : QuestScript
 				if (player.Inventory.HasItem(HanamingPetalId, 75) &&
 					player.Inventory.HasItem(OnionRedCrystalId, 1))
 				{
-					player.Inventory.RemoveItem(HanamingPetalId, 75);
-					player.Inventory.RemoveItem(OnionRedCrystalId, 1);
-
 					player.Quests.Complete(QuestId);
 					await dialog.Msg(L("*bounces excitedly* It worked! It worked! Look at this adorable little sprout! Here, you should wear it - you helped create it after all!"));
 
@@ -95,5 +93,11 @@ public class SproutQuestScript : QuestScript
 		{
 			await dialog.Msg(L("*returns to her plants* That's okay! Plants teach us patience. Come back when you're ready!"));
 		}
+	}
+
+	public override void OnComplete(Character character, Quest quest)
+	{
+		character.Inventory.RemoveItem(HanamingPetalId, 75);
+		character.Inventory.RemoveItem(OnionRedCrystalId, 1);
 	}
 }

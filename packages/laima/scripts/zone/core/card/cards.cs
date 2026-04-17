@@ -28,8 +28,15 @@ public class CardFunctionsScript : GeneralScript
 	[ScriptableFunction]
 	public static void SCR_CARDEFFECT_STATUS_RATE_HP_SP(Character character, ICombatEntity target, Item item, float TypeValue, string arg1, string arg2, string arg3)
 	{
-		SCR_CARDEFFECT_STATUS_RATE(character, target, item, TypeValue, PropertyName.RHP_BM, PropertyName.RHP, "None");
-		SCR_CARDEFFECT_STATUS_RATE(character, target, item, TypeValue, PropertyName.RSP_BM, PropertyName.RSP, "None");
+		var properties = arg1.Split('/');
+		var baseProperties = arg2.Split('/');
+		var coefficients = arg3.Split('/');
+
+		for (var i = 0; i < properties.Length; i++)
+		{
+			var coefficient = (i < coefficients.Length && coefficients[i] != "None") ? coefficients[i] : "None";
+			SCR_CARDEFFECT_STATUS_RATE(character, target, item, TypeValue, properties[i], baseProperties[i], coefficient);
+		}
 	}
 
 	[ScriptableFunction]
@@ -60,7 +67,7 @@ public class CardFunctionsScript : GeneralScript
 		}
 
 		var coefficient = arg3 == "None" ? 1 : float.Parse(arg3);
-		var value = (float)Math.Floor(TypeValue * coefficient);
+		var value = TypeValue * coefficient;
 		var finalValue = arg1.Contains("RATE", StringComparison.OrdinalIgnoreCase) ? value / 100f : value;
 		CardPropertyModifier.Instance.AddPropertyModifier(character, item.ObjectId, arg1, finalValue);
 	}
@@ -216,6 +223,29 @@ public class CardFunctionsScript : GeneralScript
 	}
 
 	[ScriptableFunction]
+	public static void SCR_CARDEFFECT_CRIT_DAMAGE_RATE(Character character, ICombatEntity target, Item item, float TypeValue, string arg1, string arg2, string arg3)
+	{
+		if (TypeValue <= 0)
+		{
+			ItemHookRegistry.Instance.UnregisterItem(character, item.ObjectId);
+			return;
+		}
+
+		var coefficient = arg3 == "None" ? 1 : float.Parse(arg3);
+
+		ItemHookRegistry.Instance.RegisterHook(character, item, ItemHookType.AttackBeforeCalc,
+			(itm, attacker, tgt, skill, modifier, skillHitResult) =>
+			{
+				var (totalStarLevel, isTrigger) = ItemHookHelper.GetCombinedCardStarLevel(character, item);
+				if (!isTrigger)
+					return;
+
+				var bonus = (coefficient * totalStarLevel) / 100f;
+				modifier.CritDamageMultiplier += bonus;
+			});
+	}
+
+	[ScriptableFunction]
 	public static void SCR_CARDEFFECT_ADD_BUFF_PC_PLUS(Character character, ICombatEntity target, Item item, float TypeValue, string buffName, string buffArg2, string arg3)
 	{
 		if (TypeValue <= 0)
@@ -254,13 +284,18 @@ public class CardFunctionsScript : GeneralScript
 			return;
 
 		var duration = int.Parse(arg3);
-		var coefficient = 0.3f;
-		var value = TypeValue * coefficient;
 
 		ItemHookRegistry.Instance.RegisterHook(character, item, ItemHookType.ItemUse,
 			(itm, attacker, tgt, skill, modifier, skillHitResult) =>
 			{
-				character.StartBuff(buffType, value, 0, TimeSpan.FromMilliseconds(duration), character);
+				var (_, isTrigger) = ItemHookHelper.GetCombinedCardStarLevel(character, itm);
+				if (!isTrigger)
+					return;
+
+				if (character.IsBuffActive(buffType))
+					return;
+
+				character.StartBuff(buffType, 0, 0, TimeSpan.FromMilliseconds(duration), character);
 			});
 	}
 
@@ -281,8 +316,14 @@ public class CardFunctionsScript : GeneralScript
 		ItemHookRegistry.Instance.RegisterHook(character, item, ItemHookType.ItemUse,
 			(itm, attacker, tgt, skill, modifier, skillHitResult) =>
 			{
-				var buff = character.StartBuff(buffType, TypeValue, 0, TimeSpan.FromMilliseconds(duration), character);
-				buff.Vars.SetString("Melia.Card.PropertyName", status);
+				var (_, isTrigger) = ItemHookHelper.GetCombinedCardStarLevel(character, itm);
+				if (!isTrigger)
+					return;
+
+				if (character.IsBuffActive(buffType))
+					return;
+
+				character.StartBuff(buffType, 0, 0, TimeSpan.FromMilliseconds(duration), character);
 			});
 	}
 
@@ -313,7 +354,7 @@ public class CardFunctionsScript : GeneralScript
 			{
 				var propertyName = arg1List[i];
 				var coefficient = (arg3List.Count > i) ? arg3List[i] : 1;
-				var value = (float)Math.Floor(TypeValue * coefficient);
+				var value = TypeValue * coefficient;
 				var finalValue = propertyName.Contains("RATE", StringComparison.OrdinalIgnoreCase) ? value / 100f : value;
 
 				CardPropertyModifier.Instance.AddPropertyModifier(character, item.ObjectId, propertyName, finalValue);
@@ -348,7 +389,7 @@ public class CardFunctionsScript : GeneralScript
 			{
 				var propertyName = arg1List[i];
 				var coefficient = (arg3List.Count > i) ? arg3List[i] : 1;
-				var value = (float)Math.Floor(TypeValue * coefficient);
+				var value = TypeValue * coefficient;
 				var finalValue = propertyName.Contains("RATE", StringComparison.OrdinalIgnoreCase) ? value / 100f : value;
 
 				CardPropertyModifier.Instance.AddPropertyModifier(character, item.ObjectId, propertyName, finalValue);
@@ -404,7 +445,8 @@ public class CardFunctionsScript : GeneralScript
 				{
 					if (condition(attacker, tgt, skill))
 					{
-						character.Heal(0, spAmount);
+						var actualSp = character.MaxSp * spAmount / 100f;
+						character.Heal(0, actualSp);
 					}
 				});
 		}
@@ -430,7 +472,8 @@ public class CardFunctionsScript : GeneralScript
 
 					if (condition(attacker, tgt, skill))
 					{
-						character.Heal(0, spAmount);
+						var actualSp = character.MaxSp * spAmount / 100f;
+						character.Heal(0, actualSp);
 					}
 				});
 		}
@@ -498,7 +541,8 @@ public class CardFunctionsScript : GeneralScript
 
 					if (condition(attacker, tgt, skill))
 					{
-						character.Heal(hpAmount, 0);
+						var actualHp = character.MaxHp * hpAmount / 100f;
+						character.Heal(actualHp, 0);
 					}
 				});
 		}
@@ -517,10 +561,9 @@ public class CardFunctionsScript : GeneralScript
 		}
 
 		var coefficient = string.IsNullOrEmpty(arg3) || arg3 == "None" ? 1 : float.Parse(arg3);
-		var value = (float)Math.Floor(TypeValue * coefficient);
-		var finalValue = PropertyName.ASPD_BM.Contains("RATE", StringComparison.OrdinalIgnoreCase) ? value / 100f : value;
+		var value = TypeValue * coefficient;
 
-		CardPropertyModifier.Instance.AddPropertyModifier(character, item.ObjectId, PropertyName.ASPD_BM, finalValue);
+		CardPropertyModifier.Instance.AddPropertyModifier(character, item.ObjectId, PropertyName.NormalASPD_BM, value);
 	}
 
 	/// <summary>
@@ -543,8 +586,8 @@ public class CardFunctionsScript : GeneralScript
 
 	/// <summary>
 	/// Buff PC based on stat (on potion use)
-	/// Uses the appropriate CARD_* buff based on buffName parameter (e.g., CARD_DEX, CARD_CON, CARD_MNA)
-	/// Note: CARD_DEX, CARD_INT, CARD_STR don't exist in the client, so they fall back to CARD_MNA (CARD_SPR)
+	/// The buff handler itself scans all equipped stat cards and applies
+	/// the correct bonuses, so the script just needs to start the buff.
 	/// </summary>
 	[ScriptableFunction]
 	public static void SCR_CARDEFFECT_ADD_BUFF_PC_STAT(Character character, ICombatEntity target, Item item, float TypeValue, string buffName, string propertyName, string arg3)
@@ -555,19 +598,26 @@ public class CardFunctionsScript : GeneralScript
 			return;
 		}
 
-		// Parse the buff name to get the correct BuffId
-		// Non-existent stat buffs fall back to CARD_MNA (only CARD_CON and CARD_MNA exist in the client)
 		if (!Enum.TryParse<BuffId>(buffName, out var buffType))
 		{
-			buffType = BuffId.CARD_MNA;
+			if (!CardMetadataRegistry.Instance.TryGet(item.ObjectId, out var metadata))
+				return;
+			var potionType = metadata.ConditionArg ?? "";
+			buffType = potionType == "HPPOTION" ? BuffId.CARD_CON : BuffId.CARD_MNA;
 		}
 
 		var duration = int.Parse(arg3);
 		ItemHookRegistry.Instance.RegisterHook(character, item, ItemHookType.ItemUse,
 			(itm, attacker, tgt, skill, modifier, skillHitResult) =>
 			{
-				character.StartBuff(buffType, TypeValue, 0, TimeSpan.FromMilliseconds(duration), character, SkillId.Normal_Attack,
-					buff => buff.Vars.SetString("Melia.Card.PropertyName", propertyName));
+				var (_, isTrigger) = ItemHookHelper.GetCombinedCardStarLevel(character, itm);
+				if (!isTrigger)
+					return;
+
+				if (character.IsBuffActive(buffType))
+					return;
+
+				character.StartBuff(buffType, 0, 0, TimeSpan.FromMilliseconds(duration), character);
 			});
 	}
 
@@ -756,6 +806,10 @@ public class CardFunctionsScript : GeneralScript
 						return;
 				}
 
+				// Don't re-activate while shield is still active
+				if (character.IsBuffActive(BuffId.CARD_Shield))
+					return;
+
 				// Apply the shield buff with the combined value from all cards
 				character.StartBuff(BuffId.CARD_Shield, totalShieldValue, 0, TimeSpan.FromSeconds(10), character);
 			});
@@ -878,8 +932,8 @@ public class CardFunctionsScript : GeneralScript
 				// Increment revival count
 				character.SetTempVar("DURAHAN_CARD_COUNT", revivalCount + 1);
 
-				// Auto-resurrect with full HP
-				character.Resurrect(ResurrectOptions.TryAgain);
+				// Auto-resurrect with 10% HP
+				character.Resurrect(ResurrectOptions.TryAgain, 0.1f);
 			});
 	}
 

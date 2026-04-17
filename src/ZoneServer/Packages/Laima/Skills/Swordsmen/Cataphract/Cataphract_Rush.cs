@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Melia.Shared.Packages;
@@ -22,7 +22,7 @@ namespace Melia.Zone.Skills.Handlers.Cataphract
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Cataphract_Rush)]
-	public class Cataphract_RushOverride : IMeleeGroundSkillHandler, IDynamicCasted
+	public class Cataphract_RushOverride : IGroundSkillHandler, IDynamicCasted, ICancelSkillHandler
 	{
 		/// <summary>
 		/// Called when the skill begins channeling.
@@ -45,9 +45,19 @@ namespace Melia.Zone.Skills.Handlers.Cataphract
 		}
 
 		/// <summary>
+		/// Called when the skill is cancelled.
+		/// </summary>
+		public void Handle(Skill skill, ICombatEntity caster)
+		{
+			caster.RemoveBuff(BuffId.Warrior_RushMove_Buff);
+			caster.StopBuff(BuffId.Warrior_EnableMovingShot_Buff);
+			caster.StopSound("voice_atk_long_war_f", "voice_war_atk_long_cast");
+		}
+
+		/// <summary>
 		/// Handles the Rush skill execution.
 		/// </summary>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{

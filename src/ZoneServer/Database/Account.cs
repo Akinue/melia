@@ -101,6 +101,11 @@ namespace Melia.Zone.Database
 		public int SelectedBarrackLayer { get; set; }
 
 		/// <summary>
+		/// Gets or sets the selected language for the account.
+		/// </summary>
+		public string Language { get; set; } = "English";
+
+		/// <summary>
 		/// The account's settings.
 		/// </summary>
 		public AccountSettings Settings { get; } = new AccountSettings();
@@ -279,14 +284,6 @@ namespace Melia.Zone.Database
 		public static Account LoadFromDb(string accountName)
 		{
 			return ZoneServer.Instance.Database.GetAccount(accountName);
-		}
-
-		/// <summary>
-		/// Saves account database.
-		/// </summary>
-		public void Save()
-		{
-			ZoneServer.Instance.Database.SaveAccountData(this);
 		}
 	}
 }

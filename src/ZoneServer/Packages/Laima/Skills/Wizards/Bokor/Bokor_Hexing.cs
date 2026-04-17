@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Threading.Tasks;
 using Melia.Shared.Packages;
 using Melia.Shared.L10N;
@@ -19,7 +19,7 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Bokor
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.Bokor_Hexing)]
-	public class Bokor_HexingOverride : IMeleeGroundSkillHandler, IDynamicCasted
+	public class Bokor_HexingOverride : IGroundSkillHandler, IDynamicCasted
 	{
 		private const int DebuffDurationMilliseconds = 20000;
 
@@ -31,7 +31,7 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Bokor
 		/// <param name="originPos"></param>
 		/// <param name="farPos"></param>
 		/// <param name="targets"></param>
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!caster.TrySpendSp(skill))
 			{
@@ -51,15 +51,14 @@ namespace Melia.Zone.Skills.Handlers.Wizards.Bokor
 
 		private async Task HandleSkill(ICombatEntity caster, Skill skill, Position originPos, Position farPos)
 		{
-			var targetPos = caster.Position.GetRelative(caster.Direction, distance: 75);
-			var circle = new CircleF(targetPos, 100f);
+			var targetPos = caster.Position.GetRelative(caster.Direction, distance: 100);
+			var circle = new CircleF(targetPos, 150f);
 			var targets = caster.Map.GetAttackableEnemiesIn(caster, circle);
 			await skill.Wait(TimeSpan.FromMilliseconds(350));
 
 			var character = caster as Character;
 			var summons = character?.Summons.GetSummons();
 
-			// Target count: 2 + SkillLevel
 			var targetCount = 2 + skill.Level;
 			foreach (var currentTarget in targets)
 			{

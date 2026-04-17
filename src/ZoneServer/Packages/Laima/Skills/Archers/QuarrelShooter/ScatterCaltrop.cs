@@ -26,9 +26,9 @@ namespace Melia.Zone.Skills.Handlers.Archers.QuarrelShooter
 	/// </summary>
 	[Package("laima")]
 	[SkillHandler(SkillId.QuarrelShooter_ScatterCaltrop)]
-	public class QuarrelShooterScatterCaltrop : IMeleeGroundSkillHandler
+	public class QuarrelShooterScatterCaltrop : IGroundSkillHandler
 	{
-		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, params ICombatEntity[] targets)
+		public void Handle(Skill skill, ICombatEntity caster, Position originPos, Position farPos, ICombatEntity target)
 		{
 			if (!skill.Vars.TryGet<Position>("Melia.ToolGroundPos", out var targetPos))
 			{
@@ -211,7 +211,21 @@ namespace Melia.Zone.Skills.Handlers.Archers.QuarrelShooter
 				EffectMoveDelay = 0f,
 			}, 0f, "ScatterCaltrop_Pad");
 			if (caster.IsBuffActive(BuffId.DeployPavise_ReinforceSkill_Buff))
-				SkillResultTargetBuff(caster, skill, BuffId.CriticalWound, 1, 0f, 10000f, 1, 20, -1, hits);
+			{
+				foreach (var hit in hits)
+				{
+					if (hit.Target.IsDead)
+						continue;
+
+					var chance = 20;
+					if (RandomProvider.Next(1, 101) > chance)
+						continue;
+
+					var buff = hit.Target.StartBuff(BuffId.CriticalWound, 1, hit.HitInfo.Damage, TimeSpan.FromMilliseconds(10000), caster);
+					if (buff != null)
+						buff.OverbuffCounter = 1;
+				}
+			}
 		}
 	}
 }

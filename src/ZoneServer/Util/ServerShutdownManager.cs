@@ -9,6 +9,7 @@ using Melia.Shared.L10N;
 using Melia.Shared.Network;
 using Melia.Shared.Network.Inter.Messages;
 using Melia.Zone.Network;
+using Melia.Zone.Services;
 using Melia.Zone.World.Actors.Characters;
 using Yggdrasil.Logging;
 
@@ -390,52 +391,44 @@ namespace Melia.Zone.Util
 					if (IsIscInitiated)
 						Log.Info("(Shutdown was initiated by ISC coordinator)");
 
-					var characters = ZoneServer.Instance.World.GetCharacters().ToList();
-					Log.Info("Players to save and disconnect: {0}", characters.Count);
+					// Stop all services (blocks new connections, stops
+					// autosave timer, heartbeat, etc.)
+					ZoneServer.Instance.StopServices();
 
-					// Final broadcast (system message, followed by MsgBox popup per player)
-					var finalMessage = "[Server] Server is shutting down NOW. Thank you for playing!";
-					BroadcastToAllPlayers(finalMessage);
-
-					// Give players a moment to see the message
+					BroadcastToAllPlayers("[Server] Server is shutting down NOW. Thank you for playing!");
 					Thread.Sleep(2000);
 
-					// Save and disconnect all players
-					var savedCount = 0;
-					var failedCount = 0;
+					// Save every character. Services are stopped so
+					// nothing can race with us.
+					Log.Info("Saving all players...");
+					var savedCount = ZoneServer.Instance.AutoSave?.SaveAllNow() ?? 0;
+					Log.Info("Saved {0} player(s).", savedCount);
 
+					// Disconnect everyone
+					var characters = ZoneServer.Instance.World.GetCharacters().ToList();
 					foreach (var character in characters)
 					{
 						try
 						{
-							Log.Info("  Saving: {0} (ID: {1})", character.Name, character.DbId);
-
-							if (character.Connection?.Account != null)
-							{
-								ZoneServer.Instance.Database.SaveCharacterData(character);
-								ZoneServer.Instance.Database.SaveAccountData(character.Connection.Account);
-								ZoneServer.Instance.Database.UpdateLoginState(character.AccountDbId, 0, LoginState.LoggedOut);
-							}
-
 							character.MsgBox(
 								Localization.Get("Server Shutdown"),
 								Localization.Get("The server is shutting down: {0}"),
 								ShutdownReason ?? "maintenance"
 							);
-							character.Connection?.Close(1000);
 
-							savedCount++;
-							Log.Info("    ✓ Saved and disconnected");
+							character.Variables.Temp.SetBool("Melia.NoSave", true);
+							character.IsAutoTrading = false;
+							character.Connection?.Close();
 						}
 						catch (Exception ex)
 						{
-							failedCount++;
-							Log.Error("    ✗ Error: {0}", ex.Message);
+							Log.Error("Error disconnecting {0}: {1}", character.Name, ex.Message);
 							character.Connection?.Close();
 						}
 					}
 
-					Log.Info("Player save complete - Saved: {0}, Failed: {1}", savedCount, failedCount);
+					// Wait for disconnects to finish
+					WaitForPlayersToLeave(timeout: TimeSpan.FromSeconds(10));
 
 					// Update server status
 					ZoneServer.Instance.ServerInfo.Status = ServerStatus.Offline;
@@ -452,16 +445,40 @@ namespace Melia.Zone.Util
 					Log.Info("========================================");
 					Log.Info("       SERVER SHUTDOWN COMPLETE         ");
 					Log.Info("========================================");
-					Log.Info("The server process can now be safely terminated.");
 
-					// Optionally exit the process
-					// Environment.Exit(0);
+					Environment.Exit(0);
 				}
 				catch (Exception ex)
 				{
 					Log.Error("Critical error during shutdown: {0}", ex);
 				}
 			});
+		}
+
+		/// <summary>
+		/// Polls until all characters have left the world, or the
+		/// timeout expires.
+		/// </summary>
+		private static void WaitForPlayersToLeave(TimeSpan timeout)
+		{
+			var deadline = DateTime.Now + timeout;
+
+			while (DateTime.Now < deadline)
+			{
+				var remaining = ZoneServer.Instance.World.GetCharacterCount();
+				if (remaining == 0)
+				{
+					Log.Info("All players have left the world.");
+					return;
+				}
+
+				Log.Info("Waiting for {0} player(s) to finish cleanup...", remaining);
+				Thread.Sleep(500);
+			}
+
+			var leftover = ZoneServer.Instance.World.GetCharacterCount();
+			if (leftover > 0)
+				Log.Warning("Timed out waiting for players to leave. {0} still in world.", leftover);
 		}
 
 		/// <summary>

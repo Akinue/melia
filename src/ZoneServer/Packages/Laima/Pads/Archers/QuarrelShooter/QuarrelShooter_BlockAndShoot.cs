@@ -19,7 +19,7 @@ namespace Melia.Zone.Pads.Handlers
 {
 	[Package("laima")]
 	[PadHandler(PadName.QuarrelShooter_BlockAndShoot)]
-	public class QuarrelShooter_BlockAndShootOverride : ICreatePadHandler, IEnterPadHandler, IUpdatePadHandler
+	public class QuarrelShooter_BlockAndShootOverride : ICreatePadHandler, IDestroyPadHandler, IEnterPadHandler, IUpdatePadHandler
 	{
 		/// <summary>
 		/// Initializes the pad when created.
@@ -44,7 +44,7 @@ namespace Melia.Zone.Pads.Handlers
 			var creator = args.Creator;
 			var skill = pad.Skill;
 
-			Send.ZC_NORMAL.PadUpdate(creator, pad, false);
+			Send.ZC_NORMAL.PadUpdate(pad, false);
 		}
 
 		/// <summary>
